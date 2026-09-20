@@ -22,4 +22,9 @@
     <ProjectReference Include="..\..\src\GridSync.Core\GridSync.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The vectors live in /spec so the TypeScript tests can load the very same file. -->
+    <Content Include="..\..\..\spec\formula-vectors.json" Link="formula-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
