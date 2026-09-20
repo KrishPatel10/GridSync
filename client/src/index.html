@@ -7,6 +7,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="A spreadsheet that stays in sync across tabs, even through disconnects.">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <script>
+    // Apply a saved theme before first paint so a pinned light or dark choice never flashes the
+    // other one. Key and values match app/theme/theme.service.ts.
+    try {
+      var saved = localStorage.getItem('gridsync-theme');
+      if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved);
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <app-root></app-root>

@@ -3,20 +3,27 @@
   The sheet is graph paper; your selection is blueprint blue; other people are colored-pencil ink.
   Everything except the ink stays quiet so collaborators are the first thing you notice.
 */
+/*
+  Each token is light-dark(light value, dark value). Which one applies follows color-scheme:
+  both by default (so the OS decides), or pinned by the theme switch, which sets data-theme on
+  <html> (see app/theme/theme.service.ts). Change a color in one place, not two.
+*/
 :root {
-  --paper: #f2f6f7;
-  --surface: #fbfdfd;
-  --header: #e4ecef;
-  --header-active: #d3e0ff;
-  --rule: #d3dee2;
-  --rule-strong: #b7c7cd;
-  --ink: #16233b;
-  --ink-muted: #56677d;
-  --blueprint: #2456d6;
-  --highlighter: #f2c94c;
-  --live: #2f7d32;
-  --warn: #a15c00;
-  --danger: #b3261e;
+  --paper: light-dark(#f2f6f7, #0e1a2b);
+  --surface: light-dark(#fbfdfd, #13233a);
+  --header: light-dark(#e4ecef, #15263d);
+  --header-active: light-dark(#d3e0ff, #1f3767);
+  --rule: light-dark(#d3dee2, #22344d);
+  --rule-strong: light-dark(#b7c7cd, #30465f);
+  --ink: light-dark(#16233b, #e3ecf5);
+  --ink-muted: light-dark(#56677d, #9aaabd);
+  --blueprint: light-dark(#2456d6, #6c9bff);
+  --highlighter: light-dark(#f2c94c, #b8912a);
+  --live: light-dark(#2f7d32, #6cc070);
+  --warn: light-dark(#a15c00, #e0a345);
+  --danger: light-dark(#b3261e, #ff8a80);
+  /* Text on a filled blueprint button: white on the dark blue, dark on the light blue. */
+  --on-accent: light-dark(#ffffff, #0e1a2b);
 
   --font-ui: 'Atkinson Hyperlegible Next', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-code: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
@@ -24,22 +31,12 @@
   color-scheme: light dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0e1a2b;
-    --surface: #13233a;
-    --header: #15263d;
-    --header-active: #1f3767;
-    --rule: #22344d;
-    --rule-strong: #30465f;
-    --ink: #e3ecf5;
-    --ink-muted: #9aaabd;
-    --blueprint: #6c9bff;
-    --highlighter: #b8912a;
-    --live: #6cc070;
-    --warn: #e0a345;
-    --danger: #ff8a80;
-  }
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 *,

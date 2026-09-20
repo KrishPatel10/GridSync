@@ -140,9 +140,25 @@
 }
 
 .toggle[aria-pressed='true'] {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--blueprint);
   border-color: var(--blueprint);
+}
+
+.theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ----- grid and status bar ----- */
@@ -173,7 +189,8 @@
 }
 
 @media (max-width: 640px) {
-  .alone {
+  .alone,
+  .theme-label {
     display: none;
   }
 

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { Title } from '@angular/platform-browser';
 import { Grid } from './grid/grid';
 import { SheetSyncService } from './sync/sheet-sync.service';
+import { ThemePreference, ThemeService, nextTheme } from './theme/theme.service';
 
 const SHEET_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -18,6 +19,12 @@ const STATUS_LABELS = {
   offline: 'Offline',
 } as const;
 
+const THEME_LABELS: Record<ThemePreference, string> = {
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+};
+
 @Component({
   selector: 'app-root',
   imports: [Grid],
@@ -30,7 +37,15 @@ export class App {
   protected readonly sync = inject(SheetSyncService);
   protected readonly sheetId = sheetIdFromUrl();
 
+  protected readonly theme = inject(ThemeService);
+
   protected readonly statusLabel = computed(() => STATUS_LABELS[this.sync.state()]);
+
+  protected readonly themeLabel = computed(() => THEME_LABELS[this.theme.preference()]);
+
+  protected readonly themeHint = computed(
+    () => `Theme: ${this.themeLabel()}. Switch to ${THEME_LABELS[nextTheme(this.theme.preference())]}.`,
+  );
 
   protected readonly sizeLabel = computed(() => {
     const { rows, cols } = this.sync.dims();
