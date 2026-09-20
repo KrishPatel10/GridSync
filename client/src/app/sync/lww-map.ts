@@ -8,6 +8,14 @@ export function cellKey(row: number, col: number): number {
   return row * COL_SPACE + col;
 }
 
+export function cellRow(key: number): number {
+  return Math.floor(key / COL_SPACE);
+}
+
+export function cellCol(key: number): number {
+  return key % COL_SPACE;
+}
+
 /**
  * Client-side replica of a sheet: one last-writer-wins register per cell, merged with the same
  * rule as GridSync.Core.SheetState. Local edits, remote broadcasts, and join snapshots all go

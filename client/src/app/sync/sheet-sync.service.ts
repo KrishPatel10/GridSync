@@ -6,6 +6,7 @@ import {
   IRetryPolicy,
   LogLevel,
 } from '@microsoft/signalr';
+import { SheetCalculator } from '../formulas/sheet-calculator';
 import { HybridLogicalClock } from './hlc';
 import { createIdentity } from './identity';
 import { cellKey, LwwCellMap } from './lww-map';
@@ -40,6 +41,11 @@ export class SheetSyncService {
 
   private readonly hlc = new HybridLogicalClock(this.identity.nodeId);
   private readonly cells = new LwwCellMap();
+  /**
+   * Turns the raw text in `cells` into computed values (formulas). Only raw text is synced; every
+   * replica derives the same values locally. It is fed from every place `cells` changes.
+   */
+  private readonly calculator = new SheetCalculator();
   /** Unsent local edits, one per cell. A newer edit to the same cell replaces the older one. */
   private readonly pending = new Map<number, CellOp>();
   private readonly connection: HubConnection;
@@ -186,6 +192,7 @@ export class SheetSyncService {
       );
 
       this._dims.set({ rows: joined.rows, cols: joined.cols });
+      this.calculator.setDimensions(joined.rows, joined.cols); // before the snapshot, so references resolve
       this._peers.set(new Map(joined.users.map((u) => [u.connectionId, u])));
       // After a reconnect, flash whatever other people changed while we were away.
       this.mergeRemote(joined.cells, { flash: this.hasJoinedOnce });
@@ -203,9 +210,16 @@ export class SheetSyncService {
 
   // ----- reading ---------------------------------------------------------------------------
 
+  /** The raw text of a cell: what was typed, and what the formula bar and the editor show. */
   valueAt(row: number, col: number): string {
     this._version(); // register the dependency for whoever is rendering
     return this.cells.get(row, col)?.value ?? '';
+  }
+
+  /** What the grid shows in a cell: a formula's computed result, or the raw text for anything else. */
+  displayAt(row: number, col: number): string {
+    this._version();
+    return this.calculator.formulaDisplayAt(row, col) ?? this.cells.get(row, col)?.value ?? '';
   }
 
   peersAt(row: number, col: number): readonly UserPresence[] {
@@ -226,6 +240,7 @@ export class SheetSyncService {
 
     const op: CellOp = { row, col, value: next, ts: this.hlc.tick() };
     this.cells.apply(op);
+    this.calculator.applyChanges([{ row, col, raw: next }]);
     this._version.update((v) => v + 1);
 
     this.pending.set(cellKey(row, col), op);
@@ -256,6 +271,8 @@ export class SheetSyncService {
     }
     if (changed.length === 0) return;
 
+    // One batch, so a join snapshot or a burst of remote edits recalculates once, not per cell.
+    this.calculator.applyChanges(changed.map((op) => ({ row: op.row, col: op.col, raw: op.value })));
     this._version.update((v) => v + 1);
     if (flash) this.flash(changed);
   }

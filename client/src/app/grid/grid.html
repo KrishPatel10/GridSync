@@ -47,7 +47,7 @@
 
           @for (c of columns(); track c) {
             @let flash = sync.flashAt(r, c);
-            @let value = sync.valueAt(r, c);
+            @let value = sync.displayAt(r, c);
             <div
               class="cell"
               role="gridcell"
