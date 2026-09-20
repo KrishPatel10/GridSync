@@ -1,0 +1,102 @@
+<div class="formula-bar">
+  <output class="address" aria-label="Selected cell">{{ address() }}</output>
+  <div class="formula" [title]="selectedValue()">{{ selectedValue() }}</div>
+</div>
+
+<div
+  #viewport
+  class="viewport"
+  tabindex="0"
+  role="grid"
+  aria-label="Sheet"
+  [attr.aria-rowcount]="sync.dims().rows + 1"
+  [attr.aria-colcount]="sync.dims().cols + 1"
+  [attr.aria-activedescendant]="activeCellId()"
+  (scroll)="onScroll()"
+  (keydown)="onGridKeydown($event)"
+  (copy)="onCopy($event)"
+  (paste)="onPaste($event)"
+>
+  <div class="canvas" [style.height.px]="canvasHeight()" [style.width.px]="canvasWidth()">
+    <div class="col-headers" role="row" aria-rowindex="1" [style.height.px]="HEADER_H">
+      <div class="corner" [style.width.px]="ROW_HEADER_W"></div>
+      @for (c of columns(); track c) {
+        <div
+          class="col-header"
+          role="columnheader"
+          [attr.aria-colindex]="c + 2"
+          [class.active]="c === selected().col"
+          [style.width.px]="COL_W"
+        >
+          {{ columnName(c) }}
+        </div>
+      }
+    </div>
+
+    <div class="rows" [style.transform]="'translateY(' + offsetY() + 'px)'">
+      @for (r of visibleRows(); track r) {
+        <div class="row" role="row" [attr.aria-rowindex]="r + 2" [style.height.px]="ROW_H">
+          <div
+            class="row-header"
+            role="rowheader"
+            [class.active]="r === selected().row"
+            [style.width.px]="ROW_HEADER_W"
+          >
+            {{ r + 1 }}
+          </div>
+
+          @for (c of columns(); track c) {
+            @let flash = sync.flashAt(r, c);
+            @let value = sync.valueAt(r, c);
+            <div
+              class="cell"
+              role="gridcell"
+              [id]="'cell-' + r + '-' + c"
+              [attr.aria-colindex]="c + 2"
+              [attr.aria-selected]="isSelected(r, c)"
+              [class.selected]="isSelected(r, c)"
+              [class.flash]="flash !== undefined"
+              [class.numeric]="isNumeric(value)"
+              [style.--flash]="flash"
+              [style.width.px]="COL_W"
+              (mousedown)="onCellMouseDown($event, r, c)"
+              (dblclick)="onCellDoubleClick(r, c)"
+            >
+              @if (isEditing(r, c)) {
+                <input
+                  #editor
+                  class="editor"
+                  aria-label="Cell contents"
+                  maxlength="10000"
+                  [value]="draft()"
+                  (input)="onEditorInput($event)"
+                  (keydown)="onEditorKeydown($event)"
+                  (blur)="onEditorBlur()"
+                />
+              } @else {
+                <span class="value">{{ value }}</span>
+              }
+
+              @for (peer of sync.peersAt(r, c); track peer.connectionId; let i = $index) {
+                <span class="peer" [style.--peer-ink]="peer.color" [style.--stack]="i" aria-hidden="true">
+                  <span class="peer-name">{{ peer.name }}</span>
+                </span>
+              }
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+@if (sync.dims().rows === 0) {
+  <div class="waiting" role="status">
+    @if (sync.state() === 'connecting') {
+      <p>Connecting to the sync server…</p>
+    } @else {
+      <p>Can't reach the sync server. Retrying automatically.</p>
+      <p class="hint">Start it from the <code>server</code> folder with <code>dotnet run --project src/GridSync.Api</code>.</p>
+    }
+  </div>
+}

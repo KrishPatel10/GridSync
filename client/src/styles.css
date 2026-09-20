@@ -1,0 +1,73 @@
+/*
+  GridSync design tokens.
+  The sheet is graph paper; your selection is blueprint blue; other people are colored-pencil ink.
+  Everything except the ink stays quiet so collaborators are the first thing you notice.
+*/
+:root {
+  --paper: #f2f6f7;
+  --surface: #fbfdfd;
+  --header: #e4ecef;
+  --header-active: #d3e0ff;
+  --rule: #d3dee2;
+  --rule-strong: #b7c7cd;
+  --ink: #16233b;
+  --ink-muted: #56677d;
+  --blueprint: #2456d6;
+  --highlighter: #f2c94c;
+  --live: #2f7d32;
+  --warn: #a15c00;
+  --danger: #b3261e;
+
+  --font-ui: 'Atkinson Hyperlegible Next', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-code: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0e1a2b;
+    --surface: #13233a;
+    --header: #15263d;
+    --header-active: #1f3767;
+    --rule: #22344d;
+    --rule-strong: #30465f;
+    --ink: #e3ecf5;
+    --ink-muted: #9aaabd;
+    --blueprint: #6c9bff;
+    --highlighter: #b8912a;
+    --live: #6cc070;
+    --warn: #e0a345;
+    --danger: #ff8a80;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blueprint);
+  outline-offset: 2px;
+}

@@ -1,0 +1,9 @@
+# .NET
+server/**/bin/
+server/**/obj/
+.vs/
+*.user
+
+# OS / editor
+.DS_Store
+Thumbs.db

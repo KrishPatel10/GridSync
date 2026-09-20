@@ -1,0 +1,183 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+/* ----- top bar ----- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mark {
+  width: 20px;
+  height: 20px;
+}
+
+.mark path {
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-width: 1;
+}
+
+.mark .mine {
+  fill: var(--blueprint);
+}
+
+.mark .theirs {
+  fill: #c2255c;
+}
+
+.wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.sheet-name {
+  padding: 2px 8px;
+  color: var(--ink-muted);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+}
+
+.people {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.alone {
+  margin-right: 6px;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--peer-ink);
+  border-radius: 50%;
+}
+
+.avatar.me {
+  background: var(--blueprint);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--blueprint);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 112px;
+  font-weight: 600;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+}
+
+.status[data-state='live'] .dot {
+  background: var(--live);
+}
+
+.status[data-state='connecting'] .dot,
+.status[data-state='reconnecting'] .dot {
+  background: var(--warn);
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+
+.status[data-state='offline'] .dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--ink-muted);
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none !important;
+  }
+}
+
+.toggle {
+  padding: 5px 12px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--header);
+}
+
+.toggle[aria-pressed='true'] {
+  color: #fff;
+  background: var(--blueprint);
+  border-color: var(--blueprint);
+}
+
+/* ----- grid and status bar ----- */
+
+.grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  padding: 6px 16px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  background: var(--surface);
+  border-top: 1px solid var(--rule-strong);
+}
+
+.pending {
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.problem {
+  color: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .alone {
+    display: none;
+  }
+
+  .status {
+    min-width: 0;
+  }
+}

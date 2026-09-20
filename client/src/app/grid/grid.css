@@ -1,0 +1,262 @@
+:host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ----- formula bar ----- */
+
+.formula-bar {
+  display: flex;
+  height: 36px;
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.address {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  flex: none;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-right: 1px solid var(--rule-strong);
+}
+
+.formula {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ----- scroll container and headers ----- */
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  outline: none;
+}
+
+.canvas {
+  position: relative;
+}
+
+.col-headers {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  background: var(--header);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.corner {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  flex: none;
+  background: var(--header);
+  border-right: 1px solid var(--rule-strong);
+}
+
+.col-header,
+.row-header {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.col-header {
+  display: grid;
+  place-items: center;
+  border-right: 1px solid var(--rule);
+}
+
+.row-header {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  background: var(--header);
+  border-right: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--rule);
+}
+
+.col-header.active,
+.row-header.active {
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--header-active);
+}
+
+/* ----- rendered rows ----- */
+
+.rows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.row {
+  display: flex;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: 0 8px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  cursor: cell;
+}
+
+.cell.numeric {
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Your selection: blueprint blue while the grid has focus, muted when it doesn't. */
+.cell.selected {
+  z-index: 1;
+}
+
+.cell.selected::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 2px solid var(--blueprint);
+  pointer-events: none;
+}
+
+.viewport:not(:focus-within) .cell.selected::after {
+  border-color: var(--ink-muted);
+}
+
+.editor {
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  padding: 0 7px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 2px solid var(--blueprint);
+  outline: none;
+  box-shadow: 0 6px 18px rgb(22 35 59 / 0.18);
+}
+
+/* ----- other people: colored-pencil ink ----- */
+
+.peer {
+  position: absolute;
+  inset: -1px;
+  z-index: 2;
+  border: 2px solid var(--peer-ink);
+  pointer-events: none;
+}
+
+.peer-name {
+  position: absolute;
+  right: -2px;
+  bottom: 100%;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--peer-ink);
+  border-radius: 3px 3px 0 0;
+  transform: translateY(calc(var(--stack, 0) * -100%));
+  /* The tag covers the cell above it, so it shows when someone arrives, then gets out of the way.
+     Hover the cell to see who's there again. */
+  animation: tag-fade 3.2s forwards;
+}
+
+.cell:hover .peer-name {
+  animation: none;
+  opacity: 1;
+}
+
+@keyframes tag-fade {
+  75% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* An edit from someone else lands in their ink, then fades. */
+.cell.flash {
+  animation: ink-in 1.4s ease-out;
+}
+
+@keyframes ink-in {
+  from {
+    background-color: color-mix(in srgb, var(--flash, var(--highlighter)) 32%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell.flash {
+    animation: none;
+    background-color: color-mix(in srgb, var(--flash, var(--highlighter)) 18%, transparent);
+  }
+}
+
+/* ----- before the first connection ----- */
+
+.waiting {
+  position: absolute;
+  inset: 37px 0 0;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-muted);
+  background: var(--paper);
+}
+
+.waiting p {
+  margin: 0;
+}
+
+.waiting code {
+  padding: 1px 5px;
+  font-family: var(--font-code);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--header);
+  border-radius: 4px;
+}

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GridSync.Api/GridSync.Api.csproj" />
+    <Project Path="src/GridSync.Core/GridSync.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GridSync.Core.Tests/GridSync.Core.Tests.csproj" />
+  </Folder>
+</Solution>
