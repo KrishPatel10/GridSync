@@ -1,0 +1,174 @@
+{
+  "description": "Conformance scenarios for the sheet calculator (dependency graph, incremental recalculation, cycles). The C# engine (xUnit) and the TypeScript engine (Vitest) both replay these. A scenario is a list of steps applied in order to one calculator. A step either sets cells or changes the sheet size. 'set' maps an A1 address to raw text (null clears the cell) and is applied as ONE batch, in the order written. After each step, 'expect' maps addresses to what the sheet shows: a formula's computed text, the raw text of any other cell, or '' for an empty cell. Optional per step: 'evaluated' is how many formulas were evaluated during the step (pins that only dependents are recomputed, each once); 'updates' is exactly the set of display changes reported to the consumer, address to new text, or null when a cell stopped being a formula.",
+  "sheet": { "rows": 100000, "cols": 26 },
+  "scenarios": [
+    {
+      "name": "a formula with no references",
+      "steps": [
+        { "set": { "A1": "=5+3" }, "expect": { "A1": "8" }, "updates": { "A1": "8" }, "evaluated": 1 }
+      ]
+    },
+    {
+      "name": "plain cells are left alone",
+      "steps": [
+        { "set": { "A1": "hello", "A2": "42" }, "expect": { "A1": "hello", "A2": "42" }, "updates": {}, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "a reference follows the cell it reads",
+      "steps": [
+        { "set": { "A1": "10", "B1": "=A1*2" }, "expect": { "A1": "10", "B1": "20" } },
+        { "set": { "A1": "7" }, "expect": { "B1": "14" }, "updates": { "B1": "14" }, "evaluated": 1 }
+      ]
+    },
+    {
+      "name": "cells are computed before the cells that read them, whatever order they were written in",
+      "steps": [
+        { "set": { "C1": "=A1+B1", "B1": "=A1*2", "A1": "5" }, "expect": { "B1": "10", "C1": "15" }, "updates": { "B1": "10", "C1": "15" }, "evaluated": 2 },
+        { "set": { "A1": "1" }, "expect": { "B1": "2", "C1": "3" }, "updates": { "B1": "2", "C1": "3" }, "evaluated": 2 }
+      ]
+    },
+    {
+      "name": "a formula that read an empty cell follows it once filled, and once cleared",
+      "steps": [
+        { "set": { "B1": "=A1+1" }, "expect": { "B1": "1" } },
+        { "set": { "A1": "4" }, "expect": { "B1": "5" }, "updates": { "B1": "5" } },
+        { "set": { "A1": null }, "expect": { "A1": "", "B1": "1" }, "updates": { "B1": "1" } }
+      ]
+    },
+    {
+      "name": "a range recalculates when a cell inside it changes, and only then",
+      "steps": [
+        { "set": { "A1": "1", "A3": "3", "B1": "=SUM(A1:A3)" }, "expect": { "B1": "4" } },
+        { "set": { "A2": "10" }, "expect": { "B1": "14" }, "updates": { "B1": "14" }, "evaluated": 1 },
+        { "set": { "A4": "100" }, "expect": { "B1": "14" }, "updates": {}, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "a range spanning several columns",
+      "steps": [
+        { "set": { "A1": "1", "B2": "2", "C3": "3", "E1": "=SUM(A1:C3)" }, "expect": { "E1": "6" } },
+        { "set": { "C2": "10" }, "expect": { "E1": "16" }, "evaluated": 1 }
+      ]
+    },
+    {
+      "name": "a cell switches between constant, formula and empty",
+      "steps": [
+        { "set": { "A1": "2", "B1": "=A1+1" }, "expect": { "B1": "3" } },
+        { "set": { "A1": "=10*10" }, "expect": { "A1": "100", "B1": "101" }, "updates": { "A1": "100", "B1": "101" } },
+        { "set": { "A1": "text" }, "expect": { "A1": "text", "B1": "#VALUE!" }, "updates": { "A1": null, "B1": "#VALUE!" } },
+        { "set": { "A1": null }, "expect": { "A1": "", "B1": "1" }, "updates": { "B1": "1" } }
+      ]
+    },
+    {
+      "name": "text that does not parse shows #ERROR! and recovers when fixed",
+      "steps": [
+        { "set": { "A1": "=1+" }, "expect": { "A1": "#ERROR!" }, "updates": { "A1": "#ERROR!" }, "evaluated": 0 },
+        { "set": { "A1": "=1+2" }, "expect": { "A1": "3" }, "updates": { "A1": "3" } }
+      ]
+    },
+    {
+      "name": "references outside the sheet are #REF!, and follow the sheet size",
+      "sheet": { "rows": 10, "cols": 3 },
+      "steps": [
+        { "set": { "B1": "=D1", "B2": "=A11", "B3": "=SUM(A1:A11)", "B4": "=C10" }, "expect": { "B1": "#REF!", "B2": "#REF!", "B3": "#REF!", "B4": "0" } },
+        { "dimensions": { "rows": 20, "cols": 5 }, "expect": { "B1": "0", "B2": "0", "B3": "0", "B4": "0" }, "updates": { "B1": "0", "B2": "0", "B3": "0" } },
+        { "dimensions": { "rows": 10, "cols": 3 }, "expect": { "B1": "#REF!", "B2": "#REF!", "B3": "#REF!", "B4": "0" } },
+        { "dimensions": { "rows": 10, "cols": 3 }, "expect": { "B1": "#REF!" }, "updates": {}, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "errors propagate through references and ranges the way the evaluator does",
+      "steps": [
+        { "set": { "A1": "=1/0", "B1": "=A1+1", "C1": "=SUM(A1:B1)", "D1": "=COUNT(A1:B1)" }, "expect": { "A1": "#DIV/0!", "B1": "#DIV/0!", "C1": "#DIV/0!", "D1": "0" } }
+      ]
+    },
+    {
+      "name": "text, booleans and IF flow through references",
+      "steps": [
+        { "set": { "A1": "x", "B1": "=A1&\"!\"", "C1": "=B1=\"X!\"", "D1": "=IF(C1,\"same\",\"diff\")" }, "expect": { "B1": "x!", "C1": "TRUE", "D1": "same" } }
+      ]
+    },
+    {
+      "name": "a cell that reads itself is a cycle",
+      "steps": [
+        { "set": { "A1": "=A1+1" }, "expect": { "A1": "#CYCLE!" }, "updates": { "A1": "#CYCLE!" }, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "a two-cell cycle flags both cells and every reader, but not unrelated cells",
+      "steps": [
+        { "set": { "A1": "=B1", "B1": "=A1", "C1": "=A1+1", "D1": "=5" }, "expect": { "A1": "#CYCLE!", "B1": "#CYCLE!", "C1": "#CYCLE!", "D1": "5" }, "evaluated": 1 }
+      ]
+    },
+    {
+      "name": "a longer cycle",
+      "steps": [
+        { "set": { "A1": "=B1", "B1": "=C1", "C1": "=D1", "D1": "=A1" }, "expect": { "A1": "#CYCLE!", "B1": "#CYCLE!", "C1": "#CYCLE!", "D1": "#CYCLE!" }, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "a cycle made of two edits that each looked fine alone",
+      "steps": [
+        { "set": { "A1": "=B1" }, "expect": { "A1": "0" } },
+        { "set": { "B1": "=A1" }, "expect": { "A1": "#CYCLE!", "B1": "#CYCLE!" }, "updates": { "A1": "#CYCLE!", "B1": "#CYCLE!" } }
+      ]
+    },
+    {
+      "name": "breaking a cycle recovers every cell",
+      "steps": [
+        { "set": { "A1": "=B1", "B1": "=A1", "C1": "=A1+1" }, "expect": { "A1": "#CYCLE!", "B1": "#CYCLE!", "C1": "#CYCLE!" } },
+        { "set": { "B1": "7" }, "expect": { "A1": "7", "B1": "7", "C1": "8" }, "updates": { "A1": "7", "B1": null, "C1": "8" } }
+      ]
+    },
+    {
+      "name": "a cell edited to read a cycle that already exists is flagged",
+      "steps": [
+        { "set": { "A1": "=B1", "B1": "=A1" }, "expect": { "A1": "#CYCLE!" } },
+        { "set": { "C1": "=A1+1", "D1": "=SUM(A1:B1)" }, "expect": { "C1": "#CYCLE!", "D1": "#CYCLE!" }, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "reading a cycle only in a branch that does not run still counts, so every replica agrees",
+      "steps": [
+        { "set": { "A1": "=B1", "B1": "=A1" }, "expect": { "A1": "#CYCLE!" } },
+        { "set": { "C1": "=IF(TRUE,1,A1)" }, "expect": { "C1": "#CYCLE!" } }
+      ]
+    },
+    {
+      "name": "cells downstream of a broken cycle do not keep a stale flag",
+      "steps": [
+        { "set": { "A1": "=A1", "B1": "=A1", "C1": "=B1" }, "expect": { "C1": "#CYCLE!" } },
+        { "set": { "A1": "3" }, "expect": { "A1": "3", "B1": "3", "C1": "3" }, "evaluated": 2 }
+      ]
+    },
+    {
+      "name": "an edit recomputes only the formulas downstream of it, each once",
+      "steps": [
+        { "set": { "A1": "1", "B1": "=A1+1", "B2": "=A1*2", "C1": "=B1+B2", "D1": "=SUM(A1:A3)", "E1": "=99", "F1": "=E1+1" }, "expect": { "F1": "100" } },
+        { "set": { "A1": "5" }, "expect": { "B1": "6", "B2": "10", "C1": "16", "D1": "5", "F1": "100" }, "evaluated": 4, "updates": { "B1": "6", "B2": "10", "C1": "16", "D1": "5" } }
+      ]
+    },
+    {
+      "name": "a formula reached by several routes is evaluated once",
+      "steps": [
+        { "set": { "A1": "1", "B1": "=A1", "C1": "=A1", "D1": "=B1+C1+A1+SUM(A1:C1)" }, "expect": { "D1": "6" } },
+        { "set": { "A1": "2" }, "expect": { "D1": "12" }, "evaluated": 3 }
+      ]
+    },
+    {
+      "name": "a cell nothing reads costs nothing",
+      "steps": [
+        { "set": { "A1": "1", "B1": "=A1" }, "expect": { "B1": "1" } },
+        { "set": { "Z9": "anything" }, "expect": { "Z9": "anything" }, "updates": {}, "evaluated": 0 }
+      ]
+    },
+    {
+      "name": "a whole batch is evaluated in a single pass",
+      "steps": [
+        { "set": { "A1": "=B1+1", "B1": "=C1+1", "C1": "=D1+1" }, "expect": { "A1": "3" }, "evaluated": 3 },
+        { "set": { "D1": "1", "E1": "=A1" }, "expect": { "A1": "4", "E1": "4" }, "evaluated": 4 }
+      ]
+    }
+  ]
+}

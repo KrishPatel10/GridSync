@@ -7,6 +7,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
+    "bench:formulas": "ng test --include src/app/formulas/recalc.bench.ts --reporters verbose",
     "smoke": "node scripts/smoke.mjs"
   },
   "private": true,

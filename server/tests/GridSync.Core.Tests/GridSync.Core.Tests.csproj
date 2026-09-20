@@ -25,6 +25,7 @@
   <ItemGroup>
     <!-- The vectors live in /spec so the TypeScript tests can load the very same file. -->
     <Content Include="..\..\..\spec\formula-vectors.json" Link="formula-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\spec\recalc-vectors.json" Link="recalc-vectors.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

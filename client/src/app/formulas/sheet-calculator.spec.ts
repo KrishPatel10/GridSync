@@ -258,6 +258,63 @@ describe('SheetCalculator', () => {
     });
   });
 
+  describe('updates for a consumer that keeps its own copy of the displays', () => {
+    const at = (address: string): number => {
+      const position = tryParseCellAddress(address) as { row: number; col: number };
+      return position.row * 16_384 + position.col;
+    };
+
+    it('lists a new formula and everything it changes', () => {
+      const calc = newCalculator();
+      expect(calc.applyChanges([{ row: 0, col: 0, raw: '=5+3' }])).toEqual([[at('A1'), '8']]);
+
+      const updates = calc.applyChanges([
+        { row: 0, col: 1, raw: '=A1*2' },
+        { row: 0, col: 2, raw: '=A1+B1' },
+      ]);
+      expect(updates).toEqual(expect.arrayContaining([[at('B1'), '16'], [at('C1'), '24']]));
+      expect(updates).toHaveLength(2);
+    });
+
+    it('lists only displays that actually changed', () => {
+      const calc = newCalculator();
+      put(calc, { A1: '3', B1: '=A1*0', C1: '=A1+1' });
+
+      // B1 stays 0 however A1 changes, so only C1 has news.
+      expect(calc.applyChanges([{ row: 0, col: 0, raw: '9' }])).toEqual([[at('C1'), '10']]);
+    });
+
+    it('lists nothing for a cell no formula reads', () => {
+      const calc = newCalculator();
+      put(calc, { A1: '=1+1' });
+      expect(calc.applyChanges([{ row: 5, col: 5, raw: 'hello' }])).toEqual([]);
+    });
+
+    it('reports null when a formula cell stops being a formula, or is cleared', () => {
+      const calc = newCalculator();
+      put(calc, { A1: '=1+1', A2: '=2+2' });
+
+      expect(calc.applyChanges([{ row: 0, col: 0, raw: 'now text' }])).toEqual([[at('A1'), null]]);
+      expect(calc.applyChanges([{ row: 1, col: 0, raw: null }])).toEqual([[at('A2'), null]]);
+    });
+
+    it('reports #CYCLE! and then the recovered value', () => {
+      const calc = newCalculator();
+      put(calc, { A1: '=B1', B1: '=A1' });
+
+      const recovered = calc.applyChanges([{ row: 0, col: 1, raw: '4' }]); // B1 becomes the constant 4
+      // B1 became the constant 4 (formula display dropped), and A1 now reads it.
+      expect(recovered).toEqual(expect.arrayContaining([[at('B1'), null], [at('A1'), '4']]));
+    });
+
+    it('reports every formula again when the sheet size changes what they can read', () => {
+      const calc = newCalculator(10, 3);
+      put(calc, { B1: '=D1' });
+      expect(calc.setDimensions(10, 5)).toEqual([[at('B1'), '0']]);
+      expect(calc.setDimensions(10, 5)).toEqual([]);
+    });
+  });
+
   describe('at scale', () => {
     it('follows a chain of 100,000 dependent cells without overflowing the stack', () => {
       const calc = newCalculator();
@@ -446,6 +503,8 @@ describe('SheetCalculator property test', () => {
       const random = mulberry32(seed * 7919);
       const raws: (string | null)[] = Array(CELLS).fill(null);
       const incremental = newCalculator(ROWS, COLS);
+      // A consumer that never looks at the calculator, only at the updates it is sent.
+      const mirror = new Map<number, string>();
       let sawCycle = false;
 
       for (let step = 0; step < 60; step++) {
@@ -457,10 +516,20 @@ describe('SheetCalculator property test', () => {
           raws[index] = randomRaw(random, index);
           changes.push({ row: Math.floor(index / COLS), col: index % COLS, raw: raws[index] });
         }
-        incremental.applyChanges(changes);
+        for (const [key, display] of incremental.applyChanges(changes)) {
+          if (display === null) mirror.delete(key);
+          else mirror.set(key, display);
+        }
 
         const expected = oracle(raws);
         expect(displays(incremental, raws), `seed ${seed}, step ${step}`).toEqual(expected);
+
+        // The updates alone must be enough to rebuild every formula's display.
+        const fromUpdates = raws.map((raw, index) => {
+          const key = Math.floor(index / COLS) * 16_384 + (index % COLS);
+          return raw !== null && raw.charAt(0) === '=' ? (mirror.get(key) ?? '(missing)') : raw ?? '';
+        });
+        expect(fromUpdates, `updates, seed ${seed}, step ${step}`).toEqual(expected);
         sawCycle ||= expected.includes('#CYCLE!');
 
         // Recalculating everything in one batch on a fresh calculator must agree too.

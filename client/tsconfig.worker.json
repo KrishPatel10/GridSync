@@ -3,13 +3,14 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": [
-      "vitest/globals"
-    ]
+    "outDir": "./out-tsc/worker",
+    "lib": [
+      "es2022",
+      "webworker"
+    ],
+    "types": []
   },
   "include": [
-    "src/**/*.d.ts",
-    "src/**/*.spec.ts",
-    "src/**/*.bench.ts"
+    "src/**/*.worker.ts"
   ]
 }
