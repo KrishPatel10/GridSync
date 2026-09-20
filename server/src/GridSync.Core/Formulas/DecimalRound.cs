@@ -34,7 +34,7 @@ public static class DecimalRound
         else
         {
             var roundUp = digits[keep] >= '5';
-            kept = roundUp ? Increment(digits[..keep]) : digits[..keep];
+            kept = roundUp ? NumberText.IncrementDigits(digits[..keep]) : digits[..keep];
             if (kept.Length == 0) return 0;
         }
 
@@ -42,21 +42,5 @@ public static class DecimalRound
         var rounded = double.Parse(
             $"{kept}E{exponent + 1 - keep}", NumberStyles.Float, CultureInfo.InvariantCulture);
         return value < 0 ? -rounded : rounded;
-    }
-
-    /// <summary>Adds one to a string of digits: "129" becomes "130", "99" becomes "100", "" becomes "1".</summary>
-    private static string Increment(string digits)
-    {
-        var chars = digits.ToCharArray();
-        for (var i = chars.Length - 1; i >= 0; i--)
-        {
-            if (chars[i] != '9')
-            {
-                chars[i]++;
-                return new string(chars);
-            }
-            chars[i] = '0';
-        }
-        return "1" + new string(chars);
     }
 }

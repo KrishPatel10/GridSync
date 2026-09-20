@@ -88,12 +88,60 @@ public static class NumberText
     /// </summary>
     internal static (string Digits, int Exponent) Decompose(double magnitude)
     {
-        // "E14" is one digit, a point, and 14 more: "1.23456000000000E+002".
+        // "E14" is one digit, a point, and 14 more: "1.23456000000000E+002". Digit n (from 2) is
+        // at index n, digit 1 is at index 0.
         var s = magnitude.ToString("E14", CultureInfo.InvariantCulture);
-        var e = s.IndexOf('E');
-        var exponent = int.Parse(s.AsSpan(e + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
-        var digits = (s[0] + s.Substring(2, SignificantDigits - 1)).TrimEnd('0');
-        return (digits.Length == 0 ? "0" : digits, exponent);
+        var exponent = ExponentOf(s);
+        var digits = FirstDigits(s);
+
+        // .NET rounds an exact tie to the even digit (1000000000000005 becomes 1E+15). JavaScript's
+        // toExponential, Excel, and this spec round it away from zero (1.00000000000001E+15). The
+        // two only differ on an exact tie: the value is precisely 15 digits, then a 5, then zeros.
+        // That always shows a 5 as the 16th digit, so only then pay for the exact expansion.
+        if (magnitude.ToString("E15", CultureInfo.InvariantCulture)[SignificantDigits + 1] == '5')
+        {
+            // 800 significant digits is more than any double has, so this string is exact.
+            var exact = magnitude.ToString("E799", CultureInfo.InvariantCulture);
+            if (exact[SignificantDigits + 1] == '5' && IsAllZeros(exact.AsSpan(SignificantDigits + 2, exact.IndexOf('E') - SignificantDigits - 2)))
+            {
+                var roundedUp = IncrementDigits(FirstDigits(exact, trim: false));
+                return roundedUp.Length > SignificantDigits
+                    ? ("1", ExponentOf(exact) + 1) // 999999999999999|5 carries into a new digit
+                    : (roundedUp.TrimEnd('0'), ExponentOf(exact));
+            }
+        }
+
+        return (digits, exponent);
+    }
+
+    private static int ExponentOf(string scientific) =>
+        int.Parse(scientific.AsSpan(scientific.IndexOf('E') + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+
+    /// <summary>The first 15 digits of a scientific-notation string, without the point.</summary>
+    private static string FirstDigits(string scientific, bool trim = true)
+    {
+        var digits = scientific[0] + scientific.Substring(2, SignificantDigits - 1);
+        if (!trim) return digits;
+        digits = digits.TrimEnd('0');
+        return digits.Length == 0 ? "0" : digits;
+    }
+
+    private static bool IsAllZeros(ReadOnlySpan<char> text) => text.IndexOfAnyExcept('0') < 0;
+
+    /// <summary>Adds one to a string of digits: "129" becomes "130", "99" becomes "100", "" becomes "1".</summary>
+    internal static string IncrementDigits(string digits)
+    {
+        var chars = digits.ToCharArray();
+        for (var i = chars.Length - 1; i >= 0; i--)
+        {
+            if (chars[i] != '9')
+            {
+                chars[i]++;
+                return new string(chars);
+            }
+            chars[i] = '0';
+        }
+        return "1" + new string(chars);
     }
 
     private static bool IsDigit(char c) => c >= '0' && c <= '9';
