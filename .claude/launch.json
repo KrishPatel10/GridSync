@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "server",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "server/src/GridSync.Api"],
+      "port": 5080
+    },
+    {
+      "name": "client",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": ["--prefix", "client", "start"],
+      "port": 4200
+    }
+  ]
+}

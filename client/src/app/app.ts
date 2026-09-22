@@ -71,8 +71,11 @@ export class App {
     void (this.sync.userOffline() ? this.sync.goOnline() : this.sync.goOffline());
   }
 
-  /** Unsynced edits only live in memory in phase 1, so warn before they're thrown away. */
+  /**
+   * Unsent edits are recovered from IndexedDB on reload (see pending-edits-outbox.ts), so this
+   * only warns when that backup isn't real: no IndexedDB, so closing really would lose them.
+   */
   protected onBeforeUnload(event: BeforeUnloadEvent): void {
-    if (this.sync.pendingCount() > 0) event.preventDefault();
+    if (this.sync.pendingCount() > 0 && !this.sync.durableOffline()) event.preventDefault();
   }
 }
