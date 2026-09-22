@@ -33,6 +33,7 @@ Open http://localhost:4200 in two browser windows side by side. Use `?sheet=anyt
 4. Press **Go online**. A's queued edits reach B, B's edits reach A (and flash so you can see what changed while you were away), and the cell you edited in both windows shows the same value everywhere.
 5. Press Ctrl+End. You're on row 100,000, and the page still only has about 30 rows in it.
 6. Type `10` in A1 and `=A1*2` in B1. B1 shows `20`, and the formula bar shows the formula. Change A1 in the *other* window and watch B1 follow in both. Then type `=B1` in A1 to make a loop: both cells show `#CYCLE!`, and go back to normal when you break it.
+7. Press **Go offline**, type something, then close the tab entirely (not just Go online first). Reopen `http://localhost:4200` with the same `?sheet=` a little later: the edit is there, and it syncs on its own once the page is live.
 
 ## How it works
 
@@ -100,6 +101,14 @@ flowchart LR
 
 **Off the UI thread.** In the browser the calculator runs in a Web Worker. The page sends raw cell changes, and the worker replies with the display text of only the formulas that changed. A formula shows blank for the moment the worker takes to answer, and everything that is not a formula appears at once. If the worker cannot start or fails, the page recomputes everything itself from the raw cells it already holds. Adding `?formulas=inline` to the address forces that in-page mode, for comparing the two.
 
+## Offline durability
+
+Closing the tab while offline, with edits that never reached the server, used to lose them. Now every unsent edit is also written to IndexedDB, so reopening the sheet recovers them: type while offline, close the tab, come back later, and the edits are there, syncing as soon as the connection is live again.
+
+Recovery does not try to reuse the closed tab's identity. Reusing its node id would risk two tabs racing to adopt the same one, and the hub binds every op to the node id its connection joined with, so a collision would make one tab's edits look forged by another. Instead, a recovered edit is replayed as a brand-new local edit under the reopened tab's own identity: same cell, same value, a fresh timestamp. The exact old timestamp never mattered for correctness, only that the cell ends up holding what was typed.
+
+A record is only recovered once it looks abandoned: each tab refreshes a "last seen" timestamp on its own IndexedDB record every few seconds while it holds unsent edits, and another tab only adopts a record once that timestamp is stale (currently 12 seconds). This is a heuristic, not a guarantee: a tab throttled hard enough by the browser (deeply backgrounded, for instance) could in theory look abandoned while still alive. That's not data-corrupting, since the last-writer-wins merge handles a duplicate resend safely either way, just a rare duplicate effort. If IndexedDB isn't available at all (some private-browsing modes, a sandboxed iframe), the app falls back to phase 1's in-memory-only behaviour and says so honestly: the "you'll lose unsaved edits" warning on closing the tab only appears when that fallback is actually in use.
+
 ## Tests
 
 ```bash
@@ -107,7 +116,8 @@ cd server && dotnet test         # 455 tests: HLC ordering, LWW merge, tombstone
                                  # convergence test, a parallel-writers test for the lock-free merge, and
                                  # the formula engine: parser, evaluator, calculator, cycles, 100,000 cell
                                  # chains, a property test (3,600 random edits vs an independent oracle)
-cd client && npm test            # 486 tests: the same on the TypeScript side, plus the sync service
+cd client && npm test            # 512 tests: the same on the TypeScript side, plus the sync service
+                                 # and the offline outbox (IndexedDB durability)
 cd client && npm run smoke       # 14 end-to-end checks with real SignalR clients against a running server
 ```
 
@@ -147,7 +157,7 @@ server/
   src/GridSync.Api/         SignalR hub, sheet store, presence tracking
   tests/GridSync.Core.Tests/
 client/
-  src/app/sync/             HLC, LWW map, SignalR sync service
+  src/app/sync/             HLC, LWW map, SignalR sync service, IndexedDB offline outbox
   src/app/grid/             virtualized grid component
   src/app/formulas/         the same formula engine in TypeScript, plus the Web Worker
   scripts/smoke.mjs         end-to-end check against a live server
@@ -163,8 +173,7 @@ spec/
 - The C# formula engine is not used by the server yet. It is the reference the TypeScript engine is tested against.
 - Comparison is exact on numbers, so `=0.1+0.2=0.3` is `FALSE`. Excel quietly forgives that; this engine does not.
 
-- Server state lives in memory and resets on restart.
-- Unsent edits also live in memory: closing a tab while offline loses them (the page warns you first).
+- Server state lives in memory and resets on restart (phase 3 replaces this with a persisted op log).
 - The app needs to reach the server once to load the sheet; it can go offline after that.
 - Two people editing the same cell at the same moment keep one value, not a merge of both texts. That's the intended rule for spreadsheet cells.
 - The grid has a fixed 100,000 by 26 size. Inserting rows concurrently is a harder problem, planned for phase 3.
@@ -174,5 +183,5 @@ spec/
 
 1. **Phase 1 (done):** live sync, presence, offline merge, virtualized grid.
 2. **Phase 2 (done):** a formula engine: parser, dependency graph between cells, incremental recalculation, cycle detection, evaluated in a Web Worker.
-3. **Phase 3:** persistence (an append-only op log with periodic snapshots, EF Core), unsent edits stored in IndexedDB, and concurrent row insertion using fractional indexing. Property-based tests with FsCheck.
+3. **Phase 3 (in progress):** unsent edits stored in IndexedDB (done, see below), server persistence (an append-only op log with periodic snapshots, EF Core), and concurrent row insertion using fractional indexing. Property-based tests with FsCheck.
 4. **Phase 4:** load testing with many simulated clients, Playwright end-to-end tests, and published numbers.

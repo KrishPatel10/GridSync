@@ -11,6 +11,8 @@ import { FormulaUpdate } from '../formulas/sheet-calculator';
 import { HybridLogicalClock } from './hlc';
 import { createIdentity } from './identity';
 import { cellKey, LwwCellMap } from './lww-map';
+import { isDurable, OUTBOX_STORAGE_FACTORY } from './outbox-storage';
+import { PendingEditsOutbox } from './pending-edits-outbox';
 import {
   ApplyResult,
   CellOp,
@@ -28,6 +30,15 @@ const retryForever: IRetryPolicy = {
 const FLASH_MS = 1_400;
 const PRESENCE_THROTTLE_MS = 60;
 const NO_PEERS: readonly UserPresence[] = [];
+
+/**
+ * How long a tab's outbox record can go untouched before another tab treats it as abandoned and
+ * recovers its edits. Must comfortably outlast a few missed heartbeats (a backgrounded tab's
+ * timers can be throttled), so this is generous relative to OUTBOX_HEARTBEAT_MS.
+ */
+const OUTBOX_STALE_MS = 12_000;
+/** How often a tab with unsent edits refreshes its outbox record, so an idle-but-open tab is never mistaken for closed. */
+const OUTBOX_HEARTBEAT_MS = 4_000;
 
 /**
  * Owns this tab's replica of the sheet and keeps it in sync with the server.
@@ -54,6 +65,17 @@ export class SheetSyncService {
   /** Unsent local edits, one per cell. A newer edit to the same cell replaces the older one. */
   private readonly pending = new Map<number, CellOp>();
   private readonly connection: HubConnection;
+
+  /**
+   * Durable backup of `pending`, so closing the tab while offline loses nothing: see
+   * pending-edits-outbox.ts. `_durableOffline` reports whether that backup is real (IndexedDB) or
+   * just an in-memory stand-in, so the UI can warn honestly about what would actually be lost.
+   */
+  private readonly outboxStorage = inject(OUTBOX_STORAGE_FACTORY)();
+  private readonly outbox = new PendingEditsOutbox(this.outboxStorage);
+  private readonly _durableOffline = signal(isDurable(this.outboxStorage));
+  private outboxPersistScheduled = false;
+  private outboxHeartbeat: ReturnType<typeof setInterval> | undefined;
 
   private sheetId = 'demo';
   private hasJoinedOnce = false;
@@ -84,6 +106,8 @@ export class SheetSyncService {
   readonly problem = this._problem.asReadonly();
   /** True when the person chose "Go offline", as opposed to the network dropping. */
   readonly userOffline = this._userOffline.asReadonly();
+  /** True when unsent edits actually survive closing the tab (a real IndexedDB, not the in-memory fallback). */
+  readonly durableOffline = this._durableOffline.asReadonly();
   readonly peers = computed(() => [...this._peers().values()]);
   readonly filledCount = computed(() => {
     this._version();
@@ -140,9 +164,14 @@ export class SheetSyncService {
       if (!this.userWantsOffline) this.scheduleStart();
     });
 
+    // Keeps the outbox record fresh while it holds anything, so another tab loading in the
+    // meantime never mistakes this still-open tab for an abandoned one (see OUTBOX_STALE_MS).
+    this.outboxHeartbeat = setInterval(() => this.persistOutboxNow(), OUTBOX_HEARTBEAT_MS);
+
     inject(DestroyRef).onDestroy(() => {
       clearTimeout(this.retryTimer);
       clearTimeout(this.selectionTimer);
+      clearInterval(this.outboxHeartbeat);
       this.formulas.dispose();
       void this.connection.stop();
     });
@@ -188,7 +217,18 @@ export class SheetSyncService {
 
   connect(sheetId: string): void {
     this.sheetId = sheetId;
-    void this.start();
+    void this.recoverThenStart();
+  }
+
+  /**
+   * Before ever trying to reach the server, replays any edits an earlier, now-abandoned tab left
+   * unsent for this sheet (see pending-edits-outbox.ts). They land in `pending` exactly like a
+   * fresh local edit, so they show up at once and sync normally once the connection comes up.
+   */
+  private async recoverThenStart(): Promise<void> {
+    const recovered = await this.outbox.harvestStaleOps(this.sheetId, OUTBOX_STALE_MS);
+    for (const op of recovered) this.setCell(op.row, op.col, op.value);
+    await this.start();
   }
 
   /** Disconnects on purpose, so you can edit offline and watch the merge when you come back. */
@@ -293,6 +333,7 @@ export class SheetSyncService {
     this.pending.set(cellKey(row, col), op);
     this._pendingCount.set(this.pending.size);
     this.scheduleFlush();
+    this.scheduleOutboxPersist();
   }
 
   /** Shares your selected cell with others, throttled so holding an arrow key doesn't flood the hub. */
@@ -367,6 +408,7 @@ export class SheetSyncService {
           if (this.pending.get(key) === op) this.pending.delete(key);
         }
         this._pendingCount.set(this.pending.size);
+        this.scheduleOutboxPersist();
 
         if (result.rejected.length > 0) {
           const first = result.rejected[0];
@@ -383,6 +425,21 @@ export class SheetSyncService {
     } finally {
       this.flushing = false;
     }
+  }
+
+  private scheduleOutboxPersist(): void {
+    if (this.outboxPersistScheduled) return;
+    this.outboxPersistScheduled = true;
+    // Same microtask-batching as scheduleFlush: a paste that sets thousands of cells writes the
+    // outbox once, not once per cell.
+    queueMicrotask(() => {
+      this.outboxPersistScheduled = false;
+      this.persistOutboxNow();
+    });
+  }
+
+  private persistOutboxNow(): void {
+    void this.outbox.persist(this.sheetId, this.identity.nodeId, [...this.pending.values()]);
   }
 
   private nextBatch(): CellOp[] {

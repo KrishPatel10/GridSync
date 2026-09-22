@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { FORMULA_BACKEND_FACTORY, FormulaBackend } from '../formulas/formula-backend';
 import { handleRequest, WorkerRequest } from '../formulas/formula-worker-protocol';
 import { FormulaUpdate, RawChange, SheetCalculator } from '../formulas/sheet-calculator';
+import { InMemoryOutboxStorage, OUTBOX_STORAGE_FACTORY } from './outbox-storage';
 import { SheetSyncService } from './sheet-sync.service';
 import { CellOp } from './sync.models';
 
@@ -218,6 +219,101 @@ describe('SheetSyncService formulas', () => {
       // And it keeps working afterwards.
       sync.setCell(0, 0, '=100');
       expect(sync.displayAt(0, 2)).toBe('201');
+    });
+  });
+
+  describe('offline durability (unsent edits survive closing the tab)', () => {
+    let storage: InMemoryOutboxStorage;
+
+    beforeEach(() => {
+      storage = new InMemoryOutboxStorage();
+      TestBed.configureTestingModule({ providers: [{ provide: OUTBOX_STORAGE_FACTORY, useValue: () => storage }] });
+    });
+
+    it('recovers edits an abandoned tab on the same sheet left unsent', async () => {
+      await storage.put({
+        sheetId: 'demo',
+        nodeId: 'gone',
+        ops: [{ row: 2, col: 1, value: 'left behind', ts: { wallMs: 1, counter: 0, nodeId: 'gone' } }],
+        lastSeenMs: Date.now() - 20_000,
+      });
+
+      const sync = TestBed.inject(SheetSyncService);
+      await join(sync);
+
+      expect(sync.valueAt(2, 1)).toBe('left behind');
+      // The fake hub accepts instantly, so by the time join() resolves this has already synced.
+      await vi.waitFor(() => expect(sync.pendingCount()).toBe(0));
+      expect(await storage.getForSheet('demo')).toEqual([]); // nothing left to recover a second time
+    });
+
+    it('leaves a record alone if it looks like its tab could still be open', async () => {
+      await storage.put({
+        sheetId: 'demo',
+        nodeId: 'maybe-alive',
+        ops: [{ row: 0, col: 0, value: 'do not touch', ts: { wallMs: 1, counter: 0, nodeId: 'maybe-alive' } }],
+        lastSeenMs: Date.now() - 1_000, // well under the staleness threshold
+      });
+
+      const sync = TestBed.inject(SheetSyncService);
+      await join(sync);
+
+      expect(sync.valueAt(0, 0)).toBe('');
+    });
+
+    it('only recovers edits left for the sheet actually being opened', async () => {
+      await storage.put({
+        sheetId: 'a-different-sheet',
+        nodeId: 'gone',
+        ops: [{ row: 0, col: 0, value: 'elsewhere', ts: { wallMs: 1, counter: 0, nodeId: 'gone' } }],
+        lastSeenMs: Date.now() - 20_000,
+      });
+
+      const sync = TestBed.inject(SheetSyncService);
+      await join(sync);
+
+      expect(sync.valueAt(0, 0)).toBe('');
+    });
+
+    it('persists a local edit, so a later reload of this sheet could recover it', async () => {
+      const sync = TestBed.inject(SheetSyncService);
+      sync.setCell(0, 0, 'not sent yet');
+
+      await vi.waitFor(async () => {
+        const records = await storage.getForSheet('demo');
+        expect(records.some((r) => r.ops.some((op) => op.value === 'not sent yet'))).toBe(true);
+      });
+    });
+
+    it('clears the persisted record once every edit has reached the server', async () => {
+      const sync = TestBed.inject(SheetSyncService);
+      await join(sync); // 'live', so the edit below flushes on its own
+
+      sync.setCell(0, 0, 'will be sent');
+      await vi.waitFor(() => expect(sync.pendingCount()).toBe(0));
+      await vi.waitFor(async () => expect(await storage.getForSheet('demo')).toEqual([]));
+    });
+
+    it('reports durability honestly: false for the in-memory fallback (what a browser without IndexedDB actually gets)', () => {
+      const sync = TestBed.inject(SheetSyncService);
+      expect(sync.durableOffline()).toBe(false);
+    });
+
+    it('keeps refreshing a live tabs own record so another tab never mistakes it for abandoned', async () => {
+      vi.useFakeTimers();
+      try {
+        const sync = TestBed.inject(SheetSyncService);
+        sync.setCell(0, 0, 'still typing');
+        await vi.advanceTimersByTimeAsync(1); // let the microtask-scheduled write land
+
+        const before = (await storage.getForSheet('demo'))[0].lastSeenMs;
+        await vi.advanceTimersByTimeAsync(4_000); // the heartbeat interval
+
+        const after = (await storage.getForSheet('demo'))[0].lastSeenMs;
+        expect(after).toBeGreaterThan(before);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
