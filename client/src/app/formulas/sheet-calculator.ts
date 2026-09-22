@@ -33,6 +33,13 @@ interface FormulaCell {
   readonly ranges: readonly RangeSub[];
 }
 
+/**
+ * A change to what the sheet shows, as [cell key, new display text]. A null display means the
+ * cell is no longer a formula, so whoever is showing a computed value for it should drop it.
+ * Only cells whose display actually differs from what was last reported are listed.
+ */
+export type FormulaUpdate = readonly [key: number, display: string | null];
+
 const NO_KEYS: readonly number[] = [];
 
 /**
@@ -65,6 +72,8 @@ export class SheetCalculator implements CellReader {
   private readonly values = new Map<number, FormulaValue>();
   /** Formula cells that are #CYCLE!: on a cycle, or reading one. */
   private readonly cyclic = new Set<number>();
+  /** The display text last reported for each formula cell, so updates list only real changes. */
+  private readonly reported = new Map<number, string>();
 
   /** Reverse edges for single-cell reads: cell -> the formulas that read it directly. */
   private readonly dependents = new Map<number, Set<number>>();
@@ -94,19 +103,22 @@ export class SheetCalculator implements CellReader {
    * References outside the sheet are #REF!, so the sheet size decides what each formula reads.
    * It only changes when joining a sheet, so a change simply rebuilds everything.
    */
-  setDimensions(rows: number, cols: number): void {
-    if (rows === this.rows && cols === this.cols) return;
+  setDimensions(rows: number, cols: number): FormulaUpdate[] {
+    if (rows === this.rows && cols === this.cols) return [];
     this.rows = rows;
     this.cols = cols;
 
     const existing = [...this.formulas.entries()];
     for (const [key, formula] of existing) this.unregister(key, formula);
     for (const [key, formula] of existing) this.register(key, formula.raw);
-    this.recalculate(this.formulas.keys());
+    return this.recalculate(this.formulas.keys());
   }
 
-  /** Applies a batch of edits, then recalculates once. A join snapshot arrives as one big batch. */
-  applyChanges(changes: Iterable<RawChange>): void {
+  /**
+   * Applies a batch of edits, then recalculates once. A join snapshot arrives as one big batch.
+   * Returns what changed on screen, for a consumer that keeps its own copy of the displays.
+   */
+  applyChanges(changes: Iterable<RawChange>): FormulaUpdate[] {
     const seeds = new Set<number>();
 
     for (const { row, col, raw } of changes) {
@@ -119,7 +131,7 @@ export class SheetCalculator implements CellReader {
       seeds.add(key);
     }
 
-    this.recalculate(seeds);
+    return this.recalculate(seeds);
   }
 
   /** The value of any cell. This is also how the evaluator reads the sheet. */
@@ -234,7 +246,7 @@ export class SheetCalculator implements CellReader {
 
   // ----- recalculation -----------------------------------------------------------------------
 
-  private recalculate(seedKeys: Iterable<number>): void {
+  private recalculate(seedKeys: Iterable<number>): FormulaUpdate[] {
     // Step 1: the affected set, discovered breadth-first along reverse edges. Each edge that is
     // found is remembered, and each cell counts how many affected cells it is still waiting on.
     const affected: number[] = [];
@@ -286,6 +298,26 @@ export class SheetCalculator implements CellReader {
     // Step 3: whatever is still waiting is waiting on something that never finishes. That is a
     // cycle, or a cell reading one.
     for (const key of waitingOn.keys()) this.markCyclic(key);
+
+    return this.collectUpdates(affected);
+  }
+
+  /** Compares each affected cell's display with what was last reported, and lists the differences. */
+  private collectUpdates(affected: readonly number[]): FormulaUpdate[] {
+    const updates: FormulaUpdate[] = [];
+    for (const key of affected) {
+      const value = this.formulas.has(key) ? this.values.get(key) : undefined;
+      if (value) {
+        const display = displayString(value);
+        if (this.reported.get(key) !== display) {
+          this.reported.set(key, display);
+          updates.push([key, display]);
+        }
+      } else if (this.reported.delete(key)) {
+        updates.push([key, null]);
+      }
+    }
+    return updates;
   }
 
   private compute(key: number): void {

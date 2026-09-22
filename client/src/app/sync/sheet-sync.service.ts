@@ -6,7 +6,8 @@ import {
   IRetryPolicy,
   LogLevel,
 } from '@microsoft/signalr';
-import { SheetCalculator } from '../formulas/sheet-calculator';
+import { FORMULA_BACKEND_FACTORY, FormulaBackend, InlineFormulaBackend } from '../formulas/formula-backend';
+import { FormulaUpdate } from '../formulas/sheet-calculator';
 import { HybridLogicalClock } from './hlc';
 import { createIdentity } from './identity';
 import { cellKey, LwwCellMap } from './lww-map';
@@ -42,10 +43,14 @@ export class SheetSyncService {
   private readonly hlc = new HybridLogicalClock(this.identity.nodeId);
   private readonly cells = new LwwCellMap();
   /**
-   * Turns the raw text in `cells` into computed values (formulas). Only raw text is synced; every
-   * replica derives the same values locally. It is fed from every place `cells` changes.
+   * Turns the raw text in `cells` into computed values (formulas), off the UI thread when the
+   * browser allows. Only raw text is synced; every replica derives the same values locally. It is
+   * fed from every place `cells` changes, and answers through `formulaDisplays`.
    */
-  private readonly calculator = new SheetCalculator();
+  private formulas: FormulaBackend;
+  /** The computed text to show for each formula cell, as last reported by the backend. */
+  private readonly formulaDisplays = new Map<number, string>();
+  private readonly createFormulaBackend = inject(FORMULA_BACKEND_FACTORY);
   /** Unsent local edits, one per cell. A newer edit to the same cell replaces the older one. */
   private readonly pending = new Map<number, CellOp>();
   private readonly connection: HubConnection;
@@ -99,6 +104,8 @@ export class SheetSyncService {
   });
 
   constructor() {
+    this.formulas = this.attachFormulas(this.createFormulaBackend());
+
     this.connection = new HubConnectionBuilder()
       .withUrl('/hubs/sheet')
       .withAutomaticReconnect(retryForever)
@@ -136,8 +143,45 @@ export class SheetSyncService {
     inject(DestroyRef).onDestroy(() => {
       clearTimeout(this.retryTimer);
       clearTimeout(this.selectionTimer);
+      this.formulas.dispose();
       void this.connection.stop();
     });
+  }
+
+  // ----- formulas --------------------------------------------------------------------------
+
+  private attachFormulas(backend: FormulaBackend): FormulaBackend {
+    backend.onUpdates = (updates) => {
+      this.applyFormulaUpdates(updates);
+    };
+    backend.onFailure = () => {
+      this.recoverFormulas();
+    };
+    return backend;
+  }
+
+  private applyFormulaUpdates(updates: readonly FormulaUpdate[]): void {
+    for (const [key, display] of updates) {
+      if (display === null) this.formulaDisplays.delete(key);
+      else this.formulaDisplays.set(key, display);
+    }
+    if (updates.length > 0) this._version.update((v) => v + 1);
+  }
+
+  /**
+   * The worker died or never started. Formulas are pure functions of the raw text we already
+   * hold, so nothing is lost: calculate on this thread instead, from a full replay of the cells.
+   */
+  private recoverFormulas(): void {
+    this.formulas.dispose();
+    this.formulaDisplays.clear();
+
+    const inline = this.attachFormulas(new InlineFormulaBackend());
+    this.formulas = inline;
+    const { rows, cols } = this._dims();
+    inline.setDimensions(rows, cols);
+    inline.applyChanges(this.cells.toOps().map((op) => ({ row: op.row, col: op.col, raw: op.value })));
+    this._version.update((v) => v + 1);
   }
 
   // ----- lifecycle -------------------------------------------------------------------------
@@ -192,7 +236,7 @@ export class SheetSyncService {
       );
 
       this._dims.set({ rows: joined.rows, cols: joined.cols });
-      this.calculator.setDimensions(joined.rows, joined.cols); // before the snapshot, so references resolve
+      this.formulas.setDimensions(joined.rows, joined.cols); // before the snapshot, so references resolve
       this._peers.set(new Map(joined.users.map((u) => [u.connectionId, u])));
       // After a reconnect, flash whatever other people changed while we were away.
       this.mergeRemote(joined.cells, { flash: this.hasJoinedOnce });
@@ -219,7 +263,10 @@ export class SheetSyncService {
   /** What the grid shows in a cell: a formula's computed result, or the raw text for anything else. */
   displayAt(row: number, col: number): string {
     this._version();
-    return this.calculator.formulaDisplayAt(row, col) ?? this.cells.get(row, col)?.value ?? '';
+    const raw = this.cells.get(row, col)?.value ?? '';
+    // A formula shows blank for the moment it takes the worker to answer. Anything else shows as
+    // typed, at once, whatever a previous formula in that cell had computed.
+    return raw.charAt(0) === '=' ? (this.formulaDisplays.get(cellKey(row, col)) ?? '') : raw;
   }
 
   peersAt(row: number, col: number): readonly UserPresence[] {
@@ -240,7 +287,7 @@ export class SheetSyncService {
 
     const op: CellOp = { row, col, value: next, ts: this.hlc.tick() };
     this.cells.apply(op);
-    this.calculator.applyChanges([{ row, col, raw: next }]);
+    this.formulas.applyChanges([{ row, col, raw: next }]);
     this._version.update((v) => v + 1);
 
     this.pending.set(cellKey(row, col), op);
@@ -272,7 +319,7 @@ export class SheetSyncService {
     if (changed.length === 0) return;
 
     // One batch, so a join snapshot or a burst of remote edits recalculates once, not per cell.
-    this.calculator.applyChanges(changed.map((op) => ({ row: op.row, col: op.col, raw: op.value })));
+    this.formulas.applyChanges(changed.map((op) => ({ row: op.row, col: op.col, raw: op.value })));
     this._version.update((v) => v + 1);
     if (flash) this.flash(changed);
   }
