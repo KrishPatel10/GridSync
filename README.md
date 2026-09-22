@@ -1,6 +1,6 @@
 # GridSync
 
-[![CI](https://github.com/kpatel-valorx/GridSync/actions/workflows/ci.yml/badge.svg)](https://github.com/kpatel-valorx/GridSync/actions/workflows/ci.yml)
+[![CI](https://github.com/KrishPatel10/GridSync/actions/workflows/ci.yml/badge.svg)](https://github.com/KrishPatel10/GridSync/actions/workflows/ci.yml)
 
 A spreadsheet where several people can edit the same sheet at once, one of them can drop offline, and when they reconnect every screen ends up identical, without a central lock or a server deciding who wins.
 
