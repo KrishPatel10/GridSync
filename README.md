@@ -1,5 +1,7 @@
 # GridSync
 
+[![CI](https://github.com/kpatel-valorx/GridSync/actions/workflows/ci.yml/badge.svg)](https://github.com/kpatel-valorx/GridSync/actions/workflows/ci.yml)
+
 A spreadsheet where several people can edit the same sheet at once, one of them can drop offline, and when they reconnect every screen ends up identical, without a central lock or a server deciding who wins.
 
 **Stack:** ASP.NET Core 10 and SignalR on the server, Angular 22 (standalone, zoneless, signals) in the browser.
