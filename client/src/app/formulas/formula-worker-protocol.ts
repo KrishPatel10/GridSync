@@ -9,8 +9,14 @@ import { FormulaUpdate, RawChange, SheetCalculator } from './sheet-calculator';
  */
 export type WorkerRequest =
   | { readonly type: 'dimensions'; readonly rows: number; readonly cols: number }
-  | { readonly type: 'changes'; readonly changes: readonly RawChange[] };
+  | { readonly type: 'changes'; readonly changes: readonly RawChange[] }
+  /** Replace the whole sheet, for when rows have moved and every position is different. */
+  | { readonly type: 'reset'; readonly rows: number; readonly cols: number; readonly changes: readonly RawChange[] };
 
+/**
+ * One reply per request, in the same order, even when nothing changed. The page relies on that to
+ * pair each reply with the arrangement of rows its request was made against.
+ */
 export interface WorkerResponse {
   readonly type: 'updates';
   readonly updates: readonly FormulaUpdate[];
@@ -26,5 +32,7 @@ export function handleRequest(calculator: SheetCalculator, request: WorkerReques
       return calculator.setDimensions(request.rows, request.cols);
     case 'changes':
       return calculator.applyChanges(request.changes);
+    case 'reset':
+      return calculator.reset(request.rows, request.cols, request.changes);
   }
 }

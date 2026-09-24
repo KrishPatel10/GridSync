@@ -17,6 +17,8 @@ export interface FormulaBackend {
 
   setDimensions(rows: number, cols: number): void;
   applyChanges(changes: readonly RawChange[]): void;
+  /** Replaces the whole sheet. For when rows have moved, so every cell has a new position. */
+  reset(rows: number, cols: number, changes: readonly RawChange[]): void;
   dispose(): void;
 }
 
@@ -35,12 +37,17 @@ export class InlineFormulaBackend implements FormulaBackend {
     this.deliver(handleRequest(this.calculator, { type: 'changes', changes }));
   }
 
+  reset(rows: number, cols: number, changes: readonly RawChange[]): void {
+    this.deliver(handleRequest(this.calculator, { type: 'reset', rows, cols, changes }));
+  }
+
   dispose(): void {
     // nothing to release
   }
 
+  /** Every request is answered, even with nothing: see WorkerResponse. */
   private deliver(updates: readonly FormulaUpdate[]): void {
-    if (updates.length > 0) this.onUpdates(updates);
+    this.onUpdates(updates);
   }
 }
 
@@ -67,6 +74,10 @@ export class WorkerFormulaBackend implements FormulaBackend {
 
   applyChanges(changes: readonly RawChange[]): void {
     this.post({ type: 'changes', changes });
+  }
+
+  reset(rows: number, cols: number, changes: readonly RawChange[]): void {
+    this.post({ type: 'reset', rows, cols, changes });
   }
 
   dispose(): void {

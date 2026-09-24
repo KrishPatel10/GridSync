@@ -115,6 +115,24 @@ export class SheetCalculator implements CellReader {
   }
 
   /**
+   * Starts over with a whole new sheet: the same cells at new positions, which is what inserting a
+   * row does to everything below it. Every formula is reported again, because whoever is showing
+   * results is about to re-key them all.
+   */
+  reset(rows: number, cols: number, changes: Iterable<RawChange>): FormulaUpdate[] {
+    this.rows = rows;
+    this.cols = cols;
+    this.constants.clear();
+    this.formulas.clear();
+    this.values.clear();
+    this.cyclic.clear();
+    this.reported.clear();
+    this.dependents.clear();
+    this.rangesByColumn.length = 0;
+    return this.applyChanges(changes);
+  }
+
+  /**
    * Applies a batch of edits, then recalculates once. A join snapshot arrives as one big batch.
    * Returns what changed on screen, for a consumer that keeps its own copy of the displays.
    */

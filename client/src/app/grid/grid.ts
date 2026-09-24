@@ -10,7 +10,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { SheetSyncService } from '../sync/sheet-sync.service';
+import { MAX_ROWS_PER_INSERT, SheetSyncService } from '../sync/sheet-sync.service';
 import { cellAddress, columnName, parseClipboardGrid } from './cell-address';
 import {
   cellAtPoint,
@@ -24,6 +24,16 @@ import {
   rangeWidth,
 } from './selection';
 import { SelectionStats, summarize } from './selection-stats';
+
+/**
+ * A cell by what it is, not where it is. A row's handle stays with that row when someone inserts
+ * rows above it, so a selection or an open editor follows its row instead of silently sliding onto
+ * a different one. (Positions are what the grid draws; handles are what it remembers.)
+ */
+interface CellRef {
+  readonly handle: number;
+  readonly col: number;
+}
 
 /** Geometry. Rows must all be the same height: that's what makes "which rows are visible" pure arithmetic. */
 const ROW_H = 30;
@@ -71,10 +81,16 @@ export class Grid {
    * The selection is the rectangle between it and `anchor`, which is where the selection started.
    * They are equal for an ordinary single-cell selection.
    */
-  protected readonly selected = signal<Pos>({ row: 0, col: 0 });
-  private readonly anchor = signal<Pos>({ row: 0, col: 0 });
+  private readonly activeRef = signal<CellRef>({ handle: 0, col: 0 });
+  private readonly anchorRef = signal<CellRef>({ handle: 0, col: 0 });
+  private readonly editingRef = signal<CellRef | null>(null);
+  protected readonly selected = computed(() => this.posOf(this.activeRef()));
+  private readonly anchor = computed(() => this.posOf(this.anchorRef()));
+  protected readonly editing = computed(() => {
+    const e = this.editingRef();
+    return e ? this.posOf(e) : null;
+  });
   private dragging = false;
-  protected readonly editing = signal<Pos | null>(null);
 
   protected readonly range = computed(() => rangeOf(this.anchor(), this.selected()));
   protected readonly isMultiCell = computed(() => !isSingleCell(this.range()));
@@ -233,10 +249,10 @@ export class Grid {
     this.commitEdit();
     // Like Excel: right-clicking inside the selection keeps it, right-clicking outside moves it there.
     if (!rangeContains(this.range(), row, col)) this.select(row, col);
-    // Keep the menu on screen: it is about 200x190, so pull it back from the right and bottom edges.
+    // Keep the menu on screen: it is about 210x240, so pull it back from the right and bottom edges.
     this.menu.set({
       x: Math.min(event.clientX, window.innerWidth - 210),
-      y: Math.min(event.clientY, window.innerHeight - 200),
+      y: Math.min(event.clientY, window.innerHeight - 250),
     });
     setTimeout(() => this.menuItems()[0]?.focus());
   }
@@ -287,6 +303,28 @@ export class Grid {
     this.clearSelection();
   }
 
+  /** "Insert row above" or "Insert 3 rows below": as many rows as the selection has, like Excel. */
+  protected readonly insertLabel = computed(() => {
+    const n = rangeHeight(this.range());
+    return n === 1 ? 'row' : `${n} rows`;
+  });
+
+  protected menuInsert(where: 'above' | 'below'): void {
+    this.closeMenu();
+    this.insertRows(where);
+  }
+
+  /** Inserts blank rows above or below the selection, then selects them across the same columns. */
+  private insertRows(where: 'above' | 'below'): void {
+    const r = this.range();
+    const count = Math.min(rangeHeight(r), MAX_ROWS_PER_INSERT);
+    const first = this.sync.insertRows(where === 'above' ? r.top : r.bottom + 1, count);
+
+    this.select(first, r.left);
+    this.anchorRef.set(this.refAt({ row: first + count - 1, col: r.right }));
+    this.viewport().nativeElement.focus();
+  }
+
   protected menuSelectAll(): void {
     this.closeMenu();
     this.selectAll();
@@ -332,9 +370,15 @@ export class Grid {
       this.selectAll();
       return;
     }
+    // Ctrl+Shift+= (Ctrl and "+"): insert rows above the selection, as in Excel.
+    if (jump && event.shiftKey && (event.key === '+' || event.key === '=')) {
+      event.preventDefault();
+      this.insertRows('above');
+      return;
+    }
     if (event.key === 'Escape' && this.isMultiCell()) {
       event.preventDefault();
-      this.anchor.set(this.selected()); // back to just the active cell
+      this.anchorRef.set(this.activeRef()); // back to just the active cell
       return;
     }
 
@@ -394,7 +438,7 @@ export class Grid {
       this.viewport().nativeElement.focus();
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      this.editing.set(null);
+      this.editingRef.set(null);
       this.viewport().nativeElement.focus();
     }
   }
@@ -447,8 +491,8 @@ export class Grid {
     );
 
     // Select what was pasted, so you can see how far it went.
-    this.anchor.set({ row, col });
-    this.selected.set({ row: lastRow, col: lastCol });
+    this.anchorRef.set(this.refAt({ row, col }));
+    this.activeRef.set(this.refAt({ row: lastRow, col: lastCol }));
     this.sync.shareSelection(lastRow, lastCol);
   }
 
@@ -458,8 +502,8 @@ export class Grid {
   private select(row: number, col: number, extend = false): void {
     const { rows, cols } = this.sync.dims();
     const next = { row: clamp(row, 0, rows - 1), col: clamp(col, 0, cols - 1) };
-    if (!extend) this.anchor.set(next);
-    this.selected.set(next);
+    if (!extend) this.anchorRef.set(this.refAt(next));
+    this.activeRef.set(this.refAt(next));
     this.scrollIntoView(next);
     this.sync.shareSelection(next.row, next.col);
   }
@@ -470,8 +514,8 @@ export class Grid {
    */
   private selectAll(): void {
     const { rows, cols } = this.sync.dims();
-    this.anchor.set({ row: rows - 1, col: cols - 1 });
-    this.selected.set({ row: 0, col: 0 });
+    this.anchorRef.set(this.refAt({ row: rows - 1, col: cols - 1 }));
+    this.activeRef.set(this.refAt({ row: 0, col: 0 }));
     this.sync.shareSelection(0, 0);
   }
 
@@ -486,14 +530,22 @@ export class Grid {
   private beginEdit(row: number, col: number, initial?: string): void {
     this.select(row, col);
     this.draft.set(initial ?? this.sync.valueAt(row, col));
-    this.editing.set({ row, col });
+    this.editingRef.set(this.refAt({ row, col }));
   }
 
   private commitEdit(): void {
-    const editing = this.editing();
+    const editing = this.editing(); // where that row is now, even if rows were inserted while typing
     if (!editing) return;
-    this.editing.set(null);
+    this.editingRef.set(null);
     this.sync.setCell(editing.row, editing.col, this.draft());
+  }
+
+  private refAt({ row, col }: Pos): CellRef {
+    return { handle: this.sync.handleAt(row), col };
+  }
+
+  private posOf(ref: CellRef): Pos {
+    return { row: Math.max(0, this.sync.indexOfHandle(ref.handle)), col: ref.col };
   }
 
   /** Scrolls just enough to bring a cell fully into view, accounting for the sticky header and row numbers. */

@@ -1,7 +1,6 @@
-import { LwwCellMap } from './lww-map';
-import { CellOp } from './sync.models';
+import { CellWrite, LwwCellMap } from './lww-map';
 
-const op = (row: number, col: number, value: string | null, wallMs: number, counter = 0, nodeId = 'n'): CellOp => ({
+const op = (row: number, col: number, value: string | null, wallMs: number, counter = 0, nodeId = 'n'): CellWrite => ({
   row,
   col,
   value,
@@ -55,7 +54,7 @@ describe('LwwCellMap', () => {
   it('converges no matter what order ops arrive in', () => {
     const random = mulberry32(20260920);
     const nodes = ['alice', 'bob', 'carol'];
-    const ops: CellOp[] = [];
+    const ops: CellWrite[] = [];
     for (let i = 0; i < 2_000; i++) {
       const value = random() < 0.2 ? null : `v${i}`;
       ops.push(op(Math.floor(random() * 10), Math.floor(random() * 3), value, 1 + Math.floor(random() * 200), Math.floor(random() * 3), nodes[Math.floor(random() * 3)]));

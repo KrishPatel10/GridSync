@@ -120,6 +120,9 @@
     <button type="button" role="menuitem" (click)="menuCopy()">Copy<kbd>Ctrl+C</kbd></button>
     <button type="button" role="menuitem" (click)="menuPaste()">Paste<kbd>Ctrl+V</kbd></button>
     <hr />
+    <button type="button" role="menuitem" (click)="menuInsert('above')">Insert {{ insertLabel() }} above<kbd>Ctrl+Shift++</kbd></button>
+    <button type="button" role="menuitem" (click)="menuInsert('below')">Insert {{ insertLabel() }} below</button>
+    <hr />
     <button type="button" role="menuitem" (click)="menuClear()">Clear contents<kbd>Del</kbd></button>
     <button type="button" role="menuitem" (click)="menuSelectAll()">Select all<kbd>Ctrl+A</kbd></button>
   </div>

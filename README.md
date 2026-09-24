@@ -6,7 +6,7 @@ A spreadsheet where several people can edit the same sheet at once, one of them 
 
 **Stack:** ASP.NET Core 10 and SignalR on the server, Angular 22 (standalone, zoneless, signals) in the browser.
 
-Phases 1 and 2 of 4 are done, and phase 3 is most of the way there: a live-synced, virtualized grid with presence and offline edit merging, a formula engine that runs in a Web Worker, durable offline edits, and server-side persistence with SQL Server. Concurrent row insertion is what's left of phase 3 (see [Roadmap](#roadmap)).
+Phases 1 to 3 of 4 are done: a live-synced, virtualized grid with presence and offline edit merging, block selection with a status-bar summary and a right-click menu, a formula engine that runs in a Web Worker, durable offline edits, server-side persistence with SQL Server, and concurrent row insertion (see [Roadmap](#roadmap)).
 
 ## Run it
 
@@ -40,7 +40,8 @@ The server's Development config (`appsettings.Development.json`, used automatica
 6. Type `10` in A1 and `=A1*2` in B1. B1 shows `20`, and the formula bar shows the formula. Change A1 in the *other* window and watch B1 follow in both. Then type `=B1` in A1 to make a loop: both cells show `#CYCLE!`, and go back to normal when you break it.
 7. Press **Go offline**, type something, then close the tab entirely (not just Go online first). Reopen `http://localhost:4200` with the same `?sheet=` a little later: the edit is there, and it syncs on its own once the page is live.
 8. With `docker compose up -d` running, type in a cell, wait a couple of seconds, then stop the server (Ctrl+C in its terminal) and start it again. Reload the browser: the cell is still there. The server never remembered it in memory across that restart; SQL Server did.
-9. Drag across cells, or click one and press Shift plus an arrow key, to select a block. The address box shows it as `B2:D5`, Delete clears the whole block, Ctrl+C copies it as tab-separated text, and pasting drops the same shape at the block's top-left corner. Ctrl+A selects everything and Escape collapses back to one cell. Other people still see only your active cell, not your block. The footer shows Average, Count, Min, Max and Sum for the block, and right-clicking opens a Cut, Copy, Paste, Clear contents and Select all menu.
+9. Drag across cells, or click one and press Shift plus an arrow key, to select a block. The address box shows it as `B2:D5`, Delete clears the whole block, Ctrl+C copies it as tab-separated text, and pasting drops the same shape at the block's top-left corner. Ctrl+A selects everything and Escape collapses back to one cell. Other people still see only your active cell, not your block. The footer shows Average, Count, Min, Max and Sum for the block, and right-clicking opens a Cut, Copy, Paste, Insert row, Clear contents and Select all menu.
+10. Put `10` in A6 and `=A6*2` in B1, then right-click A3 and choose **Insert row above**. The value is now in A7, and B1 still shows `20`: click it and the formula bar reads `=A7*2`. In the other window, insert a row at the top while this one is offline (**Go offline**), type in both new rows, then **Go online**. Both windows show the same rows in the same order.
 
 ## How it works
 
@@ -141,21 +142,38 @@ flowchart LR
 
 **Verifying this without a reachable image registry.** The sandbox this was built in cannot pull `mcr.microsoft.com/mssql/server` (Docker itself works; that one registry is unreachable from it), so the SQL-Server-specific path could not be run live from here. Everything this project's own code is responsible for was still proven, twice: `GridSync.Api.Tests` runs the real `Program.cs`, the real `EfPersistenceStore`, and real EF Core migrations against SQLite instead (a provider swap, which is EF Core's concern, not this project's), including a test that disposes the app and creates a fresh one against the same database file and confirms every edit is still there. Separately, the real server was run as a real OS process, with a real SQLite file, edited through a real browser, killed outright, and restarted as a genuinely new process: the edit was there, restored, before any client resent it. What was *not* verified here is the SQL Server dialect itself; run `docker compose up -d` yourself to confirm that last piece.
 
+## Inserting rows
+
+Right-click a row and choose **Insert row above** or **below** (or press Ctrl+Shift+plus). Select three rows first and it inserts three. Two people can do this at the same moment, one of them offline, and every screen ends up with the same rows in the same order.
+
+That is harder than it sounds, because "row 5" stops meaning anything the moment someone inserts a row above it. Three decisions make it work:
+
+**Rows have ids, cells belong to ids.** An edit says "set the cell in row `b4`, column 2", never "row 5". The sheet's initial 100,000 rows are implicit (`b0`, `b1`, ...) and cost nothing to store. An inserted row gets a random 32 digit id. Inserting a row changes which number a row has, and no edit ever refers to a number.
+
+**Order comes from keys, not numbers.** Each row has a key, a short string that sorts between its neighbours (`FractionalIndex` in C# and `fractional-index.ts`, which give identical keys, checked by shared test vectors). Inserting between two rows picks a key between theirs and touches no other row, so nothing is renumbered. If two people insert at the same spot they may pick the same key, so rows sort by key and then by id, which every replica computes the same way. The set of rows only ever grows, so merging two replicas is a union.
+
+**Formulas follow their rows.** You type `=A5+B7`, but what is stored and synced is `=A_b4+B_b6`, naming rows by id. The browser converts at the edges using the current row order (`formula-rows.ts`), so the formula still reads the same cells after an insert, and a range like `A1:A3` grows when a row goes in between. The formula engine itself still thinks in row numbers, so when rows change it is handed the sheet again (one pass over the filled cells).
+
+The protocol changed for this, so `JoinSheet` now carries a protocol version and an out of date page is told to reload. The migration converts an existing op log in place (old row numbers become `b<number>`) and drops snapshots, which are rebuilt from the log.
+
 ## Tests
 
 ```bash
-cd server && dotnet test         # 489 tests across two projects:
-                                 # GridSync.Core.Tests (455): HLC ordering, LWW merge, tombstones,
+cd server && dotnet test         # 550 tests across two projects:
+                                 # GridSync.Core.Tests (505): HLC ordering, LWW merge, tombstones,
                                  #   validation, a seeded convergence test, a parallel-writers test for
-                                 #   the lock-free merge, and the formula engine (parser, evaluator,
-                                 #   calculator, cycles, 100,000 cell chains, a property test)
-                                 # GridSync.Api.Tests (34): the persistence layer against an in-memory
+                                 #   the lock-free merge, row inserts (FsCheck: random histories in any
+                                 #   order converge), fractional keys, and the formula engine (parser,
+                                 #   evaluator, calculator, cycles, 100,000 cell chains, a property test)
+                                 # GridSync.Api.Tests (45): the persistence layer against an in-memory
                                  #   fake (restore logic, write-behind batching, snapshot timing), and
                                  #   against a real WebApplicationFactory<Program> + SQLite + a real
-                                 #   SignalR client, including a full restart-recovers-everything test
-cd client && npm test            # 512 tests: the same on the TypeScript side, plus the sync service
-                                 # and the offline outbox (IndexedDB durability)
-cd client && npm run smoke       # 14 end-to-end checks with real SignalR clients against a running server
+                                 #   SignalR client, including a full restart-recovers-everything test,
+                                 #   plus the hub's row insert handling end to end
+cd client && npm test            # 624 tests: the same on the TypeScript side, plus the row order (checked
+                                 # against a brute-force oracle), formulas following rows, the sync
+                                 # service and the offline outbox (IndexedDB durability)
+cd client && npm run smoke       # 20 end-to-end checks with real SignalR clients against a running server
 ```
 
 `npm run smoke` needs the server running. Set `GRIDSYNC_URL=http://localhost:4200 GRIDSYNC_WS_ONLY=1` to run it through the Angular dev proxy over WebSockets only.
@@ -217,12 +235,16 @@ docker-compose.yml           local SQL Server for persistence
 - Write-behind and snapshotting were only run live against SQLite, not SQL Server, from inside the environment this was built in (it cannot reach the image registry SQL Server ships from). The code path is identical either way; only the dialect differs. See [Persistence](#persistence).
 - The app needs to reach the server once to load the sheet; it can go offline after that.
 - Two people editing the same cell at the same moment keep one value, not a merge of both texts. That's the intended rule for spreadsheet cells.
-- The grid has a fixed 100,000 by 26 size. Inserting rows concurrently is a harder problem, planned for phase 3.
+- Rows can be inserted but not deleted, and there is no column insertion. Deleting a row concurrently with edits to it (and with formulas that read it) is a separate problem I have not tackled.
+- The sheet starts at 100,000 by 26 and the server allows up to 100,000 inserted rows on top of that.
+- A formula that reads an inserted row stores that row's 32 character id, so a formula with hundreds of such references can exceed the 10,000 character cell limit. The page says so instead of saving a broken formula.
+- When two people insert at the same spot at once and someone then inserts between those two new rows, the new row lands after both instead of between them. Every replica still agrees where it is.
+- Inserting a row restarts the formula calculator over every filled cell: one pass, whose cost grows with the number of filled cells rather than with the size of the change. I have not measured it at large sizes.
 - Browsers cap element height (around 17 million pixels in Firefox), so going far past 100,000 rows needs scaled scrolling.
 
 ## Roadmap
 
 1. **Phase 1 (done):** live sync, presence, offline merge, virtualized grid.
 2. **Phase 2 (done):** a formula engine: parser, dependency graph between cells, incremental recalculation, cycle detection, evaluated in a Web Worker.
-3. **Phase 3 (in progress):** unsent edits stored in IndexedDB (done), server persistence with SQL Server, an append-only op log, periodic snapshots, write-behind batching (done, see [Persistence](#persistence)), and concurrent row insertion using fractional indexing (not started: changes the wire protocol). Property-based tests with FsCheck.
+3. **Phase 3 (done):** unsent edits stored in IndexedDB, server persistence with SQL Server, an append-only op log, periodic snapshots, write-behind batching (see [Persistence](#persistence)), concurrent row insertion using fractional indexing (see [Inserting rows](#inserting-rows)), and property-based tests with FsCheck.
 4. **Phase 4:** load testing with many simulated clients, Playwright end-to-end tests, and published numbers.

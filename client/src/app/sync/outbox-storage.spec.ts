@@ -3,7 +3,7 @@ import { InMemoryOutboxStorage, isDurable, IndexedDbOutboxStorage, OutboxRecord 
 const record = (sheetId: string, nodeId: string, lastSeenMs = 1): OutboxRecord => ({
   sheetId,
   nodeId,
-  ops: [{ row: 0, col: 0, value: 'x', ts: { wallMs: 1, counter: 0, nodeId } }],
+  ops: [{ rowId: 'b0', col: 0, value: 'x', ts: { wallMs: 1, counter: 0, nodeId } }],
   lastSeenMs,
 });
 

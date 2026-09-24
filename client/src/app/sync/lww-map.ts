@@ -1,5 +1,17 @@
-import { compareHlc } from './hlc';
-import { CellEntry, CellOp } from './sync.models';
+import { compareHlc, HlcTimestamp } from './hlc';
+import { CellEntry } from './sync.models';
+
+/**
+ * One write to one cell, with the row named by a handle (a small number local to this replica; see
+ * RowOrder) rather than by the wire's row id. Cell storage only ever needs to tell rows apart, and a
+ * number makes a cheaper map key than a 32 character id.
+ */
+export interface CellWrite {
+  readonly row: number;
+  readonly col: number;
+  readonly value: string | null;
+  readonly ts: HlcTimestamp;
+}
 
 /** Excel's column limit. Multiplying by it keeps numeric keys unique for any sheet we allow. */
 const COL_SPACE = 16_384;
@@ -26,7 +38,7 @@ export class LwwCellMap {
   private filled = 0;
 
   /** Returns true if the op won and changed state; false if it was stale or a duplicate. */
-  apply(op: CellOp): boolean {
+  apply(op: CellWrite): boolean {
     const key = cellKey(op.row, op.col);
     const current = this.cells.get(key);
     if (current && compareHlc(op.ts, current.ts) <= 0) return false;
@@ -54,8 +66,8 @@ export class LwwCellMap {
   }
 
   /** Every winning write, tombstones included, in no particular order. */
-  toOps(): CellOp[] {
-    const ops: CellOp[] = [];
+  toOps(): CellWrite[] {
+    const ops: CellWrite[] = [];
     for (const [key, entry] of this.cells) {
       ops.push({ row: Math.floor(key / COL_SPACE), col: key % COL_SPACE, value: entry.value, ts: entry.ts });
     }

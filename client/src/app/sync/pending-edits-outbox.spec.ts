@@ -3,7 +3,7 @@ import { PendingEditsOutbox } from './pending-edits-outbox';
 import { CellOp } from './sync.models';
 
 const op = (row: number, col: number, value: string | null, wallMs: number, nodeId = 'n'): CellOp => ({
-  row,
+  rowId: `b${row}`,
   col,
   value,
   ts: { wallMs, counter: 0, nodeId },
@@ -25,7 +25,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'node-a', [op(0, 0, 'x', 1)]);
 
       expect(await storage.getForSheet('demo')).toEqual([
-        { sheetId: 'demo', nodeId: 'node-a', ops: [op(0, 0, 'x', 1)], lastSeenMs: 1_000 },
+        { sheetId: 'demo', nodeId: 'node-a', ops: [op(0, 0, 'x', 1)], rows: [], lastSeenMs: 1_000 },
       ]);
     });
 
@@ -59,7 +59,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'gone', [op(2, 3, 'left behind', 0)]);
       clock.advance(20_000);
 
-      expect(await outbox.harvestStaleOps('demo', 12_000)).toEqual([op(2, 3, 'left behind', 0)]);
+      expect((await outbox.harvestStaleOps('demo', 12_000)).cells).toEqual([op(2, 3, 'left behind', 0)]);
     });
 
     it('leaves a record alone if it was touched recently: its tab may still be alive', async () => {
@@ -70,7 +70,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'maybe-alive', [op(0, 0, 'x', 0)]);
       clock.advance(5_000); // under the 12,000ms threshold
 
-      expect(await outbox.harvestStaleOps('demo', 12_000)).toEqual([]);
+      expect((await outbox.harvestStaleOps('demo', 12_000)).cells).toEqual([]);
       expect(await storage.getForSheet('demo')).toHaveLength(1); // not touched
     });
 
@@ -82,7 +82,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'edge', [op(0, 0, 'x', 0)]);
       clock.advance(12_000);
 
-      expect(await outbox.harvestStaleOps('demo', 12_000)).toHaveLength(1);
+      expect((await outbox.harvestStaleOps('demo', 12_000)).cells).toHaveLength(1);
     });
 
     it('removes the harvested records so they are not recovered twice', async () => {
@@ -94,7 +94,7 @@ describe('PendingEditsOutbox', () => {
       clock.advance(20_000);
 
       await outbox.harvestStaleOps('demo', 12_000);
-      expect(await outbox.harvestStaleOps('demo', 12_000)).toEqual([]);
+      expect((await outbox.harvestStaleOps('demo', 12_000)).cells).toEqual([]);
     });
 
     it('only harvests the requested sheet', async () => {
@@ -106,7 +106,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('sheet-2', 'also-gone', [op(0, 0, 'y', 0)]);
       clock.advance(20_000);
 
-      expect(await outbox.harvestStaleOps('sheet-1', 12_000)).toEqual([op(0, 0, 'x', 0)]);
+      expect((await outbox.harvestStaleOps('sheet-1', 12_000)).cells).toEqual([op(0, 0, 'x', 0)]);
       expect(await storage.getForSheet('sheet-2')).toHaveLength(1); // untouched by harvesting sheet-1
     });
 
@@ -120,7 +120,7 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'b', [op(0, 0, 'second, newer', 20)]);
       clock.advance(20_000);
 
-      const recovered = await outbox.harvestStaleOps('demo', 12_000);
+      const recovered = (await outbox.harvestStaleOps('demo', 12_000)).cells;
       expect(recovered).toEqual(
         expect.arrayContaining([op(0, 0, 'second, newer', 20), op(0, 1, 'only a', 10)]),
       );
@@ -135,7 +135,46 @@ describe('PendingEditsOutbox', () => {
       await outbox.persist('demo', 'empty', []); // persist() deletes on empty, but guard the case anyway
       clock.advance(20_000);
 
-      expect(await outbox.harvestStaleOps('demo', 12_000)).toEqual([]);
+      expect((await outbox.harvestStaleOps('demo', 12_000)).cells).toEqual([]);
+    });
+
+    it('recovers rows an abandoned tab inserted, along with the cells typed into them', async () => {
+      const storage = new InMemoryOutboxStorage();
+      const clock = manualClock(0);
+      const outbox = new PendingEditsOutbox(storage, clock.now);
+      const rowId = 'f'.repeat(32);
+
+      await outbox.persist('demo', 'gone', [{ ...op(0, 0, 'in the new row', 0), rowId }], [{ rowId, key: 'V5' }]);
+      clock.advance(20_000);
+
+      const recovered = await outbox.harvestStaleOps('demo', 12_000);
+      expect(recovered.rows).toEqual([{ rowId, key: 'V5' }]);
+      expect(recovered.cells.map((c) => c.rowId)).toEqual([rowId]);
+    });
+
+    it('recovers a record that holds only a row insert', async () => {
+      const storage = new InMemoryOutboxStorage();
+      const clock = manualClock(0);
+      const outbox = new PendingEditsOutbox(storage, clock.now);
+
+      await outbox.persist('demo', 'gone', [], [{ rowId: 'a'.repeat(32), key: 'V' }]);
+      clock.advance(20_000);
+
+      expect((await outbox.harvestStaleOps('demo', 12_000)).rows).toHaveLength(1);
+    });
+
+    it('reads a record written before rows had ids, naming the row from its number', async () => {
+      const storage = new InMemoryOutboxStorage();
+      const clock = manualClock(0);
+      const outbox = new PendingEditsOutbox(storage, clock.now);
+      const legacy = { row: 7, col: 2, value: 'old format', ts: { wallMs: 1, counter: 0, nodeId: 'gone' } };
+
+      await storage.put({ sheetId: 'demo', nodeId: 'gone', ops: [legacy as unknown as CellOp], lastSeenMs: 0 });
+      clock.advance(20_000);
+
+      const recovered = await outbox.harvestStaleOps('demo', 12_000);
+      expect(recovered.cells).toEqual([expect.objectContaining({ rowId: 'b7', col: 2, value: 'old format' })]);
+      expect(recovered.rows).toEqual([]);
     });
   });
 });

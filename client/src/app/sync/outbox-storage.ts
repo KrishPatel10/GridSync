@@ -1,15 +1,20 @@
 import { InjectionToken } from '@angular/core';
-import { CellOp } from './sync.models';
+import { CellOp, RowOp } from './sync.models';
 
 /**
  * A tab's unsent edits for one sheet, as last written to storage. `nodeId` exists only to keep
  * two tabs' records from overwriting each other: recovery never reuses it (see
  * pending-edits-outbox.ts), so nothing here depends on the writing tab still existing.
+ *
+ * Records written before rows could be inserted have no `rows`, and name a cell's row by number
+ * (`row`) instead of by id (`rowId`); pending-edits-outbox.ts reads those too.
  */
 export interface OutboxRecord {
   readonly sheetId: string;
   readonly nodeId: string;
   readonly ops: readonly CellOp[];
+  /** Rows this tab inserted that the server has not yet acknowledged. */
+  readonly rows?: readonly RowOp[];
   /** Date.now() as of the last write. How a stale (abandoned) record is told apart from a live one. */
   readonly lastSeenMs: number;
 }
