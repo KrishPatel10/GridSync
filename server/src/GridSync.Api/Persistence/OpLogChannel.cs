@@ -26,4 +26,7 @@ public sealed class OpLogChannel
 
     /// <summary>Queues an accepted op for the background writer. Never blocks and never throws.</summary>
     public void Enqueue(string sheetId, Core.CellOp op) => _channel.Writer.TryWrite(SheetRestorer.ToLogEntry(sheetId, op));
+
+    /// <summary>Queues an accepted row insert. Rows and cells share one queue, so the log keeps them in the order they were accepted.</summary>
+    public void Enqueue(string sheetId, Core.RowOp op) => _channel.Writer.TryWrite(SheetRestorer.ToLogEntry(sheetId, op));
 }

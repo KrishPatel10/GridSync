@@ -23,11 +23,15 @@ public static class SheetRestorer
 
         if (snapshot is not null)
         {
-            var cells = JsonSerializer.Deserialize<List<CellOp>>(snapshot.CellsJson) ?? [];
-            foreach (var op in cells) state.Apply(op);
+            foreach (var row in JsonSerializer.Deserialize<List<RowOp>>(snapshot.RowsJson) ?? []) state.InsertRow(row);
+            foreach (var op in JsonSerializer.Deserialize<List<CellOp>>(snapshot.CellsJson) ?? []) state.Apply(op);
         }
 
-        foreach (var entry in tail) state.Apply(ToCellOp(entry));
+        foreach (var entry in tail)
+        {
+            if (entry.RowKey is not null) state.InsertRow(new RowOp(entry.RowId, entry.RowKey));
+            else state.Apply(ToCellOp(entry));
+        }
 
         return state;
     }
@@ -45,14 +49,23 @@ public static class SheetRestorer
     {
         SheetId = state.Id,
         CellsJson = JsonSerializer.Serialize(state.Snapshot()),
+        RowsJson = JsonSerializer.Serialize(state.RowSnapshot()),
         UpToOpId = upToOpId,
         WrittenAtUtc = time.GetUtcNow(),
+    };
+
+    public static OpLogEntry ToLogEntry(string sheetId, RowOp op) => new()
+    {
+        SheetId = sheetId,
+        RowId = op.RowId,
+        RowKey = op.Key,
+        NodeId = string.Empty,
     };
 
     public static OpLogEntry ToLogEntry(string sheetId, CellOp op) => new()
     {
         SheetId = sheetId,
-        Row = op.Row,
+        RowId = op.RowId,
         Col = op.Col,
         Value = op.Value,
         WallMs = op.Ts.WallMs,
@@ -61,5 +74,5 @@ public static class SheetRestorer
     };
 
     private static CellOp ToCellOp(OpLogEntry entry) =>
-        new(entry.Row, entry.Col, entry.Value, new HlcTimestamp(entry.WallMs, entry.Counter, entry.NodeId));
+        new(entry.RowId, entry.Col, entry.Value, new HlcTimestamp(entry.WallMs, entry.Counter, entry.NodeId));
 }

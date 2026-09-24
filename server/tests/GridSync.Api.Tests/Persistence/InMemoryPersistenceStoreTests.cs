@@ -13,7 +13,7 @@ public class InMemoryPersistenceStoreTests
     private static OpLogEntry Entry(string sheetId, int row, int col, string? value = "x", long wallMs = 1, string node = "n") => new()
     {
         SheetId = sheetId,
-        Row = row,
+        RowId = "b" + row,
         Col = col,
         Value = value,
         WallMs = wallMs,

@@ -22,7 +22,7 @@ public class SnapshotServiceTests
 
     private static async Task<SheetState> Opened(SheetStore sheets, string id) => await sheets.GetOrCreateAsync(id);
 
-    private static CellOp Op(int row, int col, long wallMs) => new(row, col, "x", new HlcTimestamp(wallMs, 0, "n"));
+    private static CellOp Op(int row, int col, long wallMs) => new(RowIds.ForBaseRow(row), col, "x", new HlcTimestamp(wallMs, 0, "n"));
 
     [Fact]
     public async Task Does_not_snapshot_a_sheet_with_no_logged_ops()

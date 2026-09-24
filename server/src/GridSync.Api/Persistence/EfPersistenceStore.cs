@@ -51,6 +51,7 @@ public sealed class EfPersistenceStore(IDbContextFactory<GridSyncDbContext> fact
             .Where(s => s.SheetId == snapshot.SheetId)
             .ExecuteUpdateAsync(set => set
                 .SetProperty(s => s.CellsJson, snapshot.CellsJson)
+                .SetProperty(s => s.RowsJson, snapshot.RowsJson)
                 .SetProperty(s => s.UpToOpId, snapshot.UpToOpId)
                 .SetProperty(s => s.WrittenAtUtc, snapshot.WrittenAtUtc), ct);
 

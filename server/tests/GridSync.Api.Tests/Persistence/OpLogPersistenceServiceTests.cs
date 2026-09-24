@@ -7,7 +7,7 @@ namespace GridSync.Api.Tests.Persistence;
 public class OpLogPersistenceServiceTests
 {
     private static CellOp Op(int row, int col, string value = "x") =>
-        new(row, col, value, new HlcTimestamp(1, 0, "n"));
+        new(RowIds.ForBaseRow(row), col, value, new HlcTimestamp(1, 0, "n"));
 
     private static (OpLogChannel Channel, InMemoryPersistenceStore Store, OpLogPersistenceService Service) NewService()
     {

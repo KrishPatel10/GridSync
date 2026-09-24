@@ -5,7 +5,7 @@ public class SheetStateTests
     private static readonly SheetDimensions Dims = new(100, 26);
 
     private static CellOp Op(int row, int col, string? value, long wall, int counter = 0, string node = "n") =>
-        new(row, col, value, new HlcTimestamp(wall, counter, node));
+        new(RowIds.ForBaseRow(row), col, value, new HlcTimestamp(wall, counter, node));
 
     [Fact]
     public void Newer_write_wins()
@@ -15,7 +15,7 @@ public class SheetStateTests
         Assert.True(sheet.Apply(Op(0, 0, "old", wall: 1)));
         Assert.True(sheet.Apply(Op(0, 0, "new", wall: 2)));
 
-        Assert.Equal("new", sheet.Get(0, 0)?.Value);
+        Assert.Equal("new", sheet.Get(RowIds.ForBaseRow(0), 0)?.Value);
     }
 
     [Fact]
@@ -27,7 +27,7 @@ public class SheetStateTests
         var applied = sheet.Apply(Op(0, 0, "old", wall: 1));
 
         Assert.False(applied);
-        Assert.Equal("new", sheet.Get(0, 0)?.Value);
+        Assert.Equal("new", sheet.Get(RowIds.ForBaseRow(0), 0)?.Value);
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class SheetStateTests
         var resurrected = sheet.Apply(Op(1, 1, "hello again", wall: 2)); // late offline edit
 
         Assert.False(resurrected);
-        Assert.Null(sheet.Get(1, 1)?.Value);
+        Assert.Null(sheet.Get(RowIds.ForBaseRow(1), 1)?.Value);
         Assert.Equal(0, sheet.FilledCount);
         Assert.Single(sheet.Snapshot()); // tombstone is still part of the snapshot
     }
@@ -90,11 +90,11 @@ public class SheetStateTests
 
         Parallel.ForEach(ops.OrderBy(_ => Guid.NewGuid()), op => sheet.Apply(op));
 
-        Assert.Equal("v5000", sheet.Get(0, 0)?.Value);
+        Assert.Equal("v5000", sheet.Get(RowIds.ForBaseRow(0), 0)?.Value);
     }
 
     private static string Render(SheetState sheet) =>
         string.Join('\n', sheet.Snapshot()
-            .OrderBy(o => o.Row).ThenBy(o => o.Col)
-            .Select(o => $"{o.Row},{o.Col}={o.Value ?? "<cleared>"}@{o.Ts}"));
+            .OrderBy(o => o.RowId, StringComparer.Ordinal).ThenBy(o => o.Col)
+            .Select(o => $"{o.RowId},{o.Col}={o.Value ?? "<cleared>"}@{o.Ts}"));
 }

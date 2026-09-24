@@ -60,6 +60,18 @@ public static class FractionalIndex
         return new string(digits) + "V";
     }
 
+    /// <summary>True when <paramref name="key"/> is a well formed key: non-empty, only key digits, not ending in "0".</summary>
+    public static bool IsValid(string? key)
+    {
+        if (string.IsNullOrEmpty(key) || key[^1] == '0') return false;
+        foreach (var c in key)
+        {
+            if (Digits.IndexOf(c) < 0) return false;
+        }
+
+        return true;
+    }
+
     private static string Midpoint(string a, string? b)
     {
         if (b is not null)

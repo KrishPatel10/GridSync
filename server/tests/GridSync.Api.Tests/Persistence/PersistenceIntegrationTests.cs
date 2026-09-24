@@ -59,7 +59,7 @@ public class PersistenceIntegrationTests : IAsyncLifetime
     // rejects an op whose timestamp's node id does not match the node id its connection joined
     // with (see SheetHub.ApplyOps), so the default here must agree with the JoinSheet calls below.
     private static CellOp Op(int row, int col, string value, long wallMs, string node = "node-a") =>
-        new(row, col, value, new HlcTimestamp(wallMs, 0, node));
+        new(RowIds.ForBaseRow(row), col, value, new HlcTimestamp(wallMs, 0, node));
 
     /// <summary>Polls the SQLite file directly (a fresh, independent connection) until N ops for a sheet are visible.</summary>
     private async Task WaitForLoggedAsync(string sheetId, int count, TimeSpan? timeout = null)
@@ -80,8 +80,8 @@ public class PersistenceIntegrationTests : IAsyncLifetime
         await using var app = NewApp();
         await using var connection = await ConnectAsync(app);
 
-        await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233");
-        var result = await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(0, 0, "hello", 1) });
+        await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233", Protocol.Version);
+        var result = await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(0, 0, "hello", 1) });
 
         Assert.Equal(1, result.Accepted);
         Assert.Empty(result.Rejected);
@@ -93,9 +93,10 @@ public class PersistenceIntegrationTests : IAsyncLifetime
         await using (var app = NewApp())
         {
             await using var connection = await ConnectAsync(app);
-            await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233");
+            await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233", Protocol.Version);
             await connection.InvokeAsync<ApplyResult>(
                 "ApplyOps",
+                Array.Empty<RowOp?>(),
                 new CellOp?[] { Op(0, 0, "survives a restart", 1), Op(1, 2, "so does this", 2) });
 
             await WaitForLoggedAsync("demo", count: 2); // let write-behind actually catch up
@@ -104,10 +105,10 @@ public class PersistenceIntegrationTests : IAsyncLifetime
 
         await using var restarted = NewApp();
         await using var connection2 = await ConnectAsync(restarted);
-        var joined = await connection2.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-b", "Bob", "#445566");
+        var joined = await connection2.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-b", "Bob", "#445566", Protocol.Version);
 
-        Assert.Contains(joined.Cells, c => c.Row == 0 && c.Col == 0 && c.Value == "survives a restart");
-        Assert.Contains(joined.Cells, c => c.Row == 1 && c.Col == 2 && c.Value == "so does this");
+        Assert.Contains(joined.Cells, c => c.RowId == "b0" && c.Col == 0 && c.Value == "survives a restart");
+        Assert.Contains(joined.Cells, c => c.RowId == "b1" && c.Col == 2 && c.Value == "so does this");
     }
 
     [Fact]
@@ -116,12 +117,12 @@ public class PersistenceIntegrationTests : IAsyncLifetime
         await using (var app = NewApp())
         {
             await using var connection = await ConnectAsync(app);
-            await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233");
+            await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233", Protocol.Version);
 
             // Default SnapshotEveryNOps (200) would never fire in a test; drive one directly so
             // this proves the snapshot-then-tail path, not only the tail-only path above.
             for (var i = 0; i < 3; i++)
-                await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(0, i, $"snapshot-{i}", i + 1) });
+                await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(0, i, $"snapshot-{i}", i + 1) });
             await WaitForLoggedAsync("demo", count: 3);
 
             // Force a snapshot directly rather than waiting on the real SnapshotService's timer
@@ -132,17 +133,46 @@ public class PersistenceIntegrationTests : IAsyncLifetime
             var store = scope.ServiceProvider.GetRequiredService<IPersistenceStore>();
             await store.SaveSnapshotAsync(SheetRestorer.ToSnapshot(sheets.Find("demo")!, await store.GetLatestOpIdAsync("demo"), TimeProvider.System));
 
-            await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(1, 0, "after-the-snapshot", 10) });
+            await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(1, 0, "after-the-snapshot", 10) });
             await WaitForLoggedAsync("demo", count: 4);
         }
 
         await using var restarted = NewApp();
         await using var connection2 = await ConnectAsync(restarted);
-        var joined = await connection2.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-b", "Bob", "#445566");
+        var joined = await connection2.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-b", "Bob", "#445566", Protocol.Version);
 
-        Assert.Contains(joined.Cells, c => c.Row == 0 && c.Col == 0 && c.Value == "snapshot-0");
-        Assert.Contains(joined.Cells, c => c.Row == 0 && c.Col == 2 && c.Value == "snapshot-2");
-        Assert.Contains(joined.Cells, c => c.Row == 1 && c.Col == 0 && c.Value == "after-the-snapshot");
+        Assert.Contains(joined.Cells, c => c.RowId == "b0" && c.Col == 0 && c.Value == "snapshot-0");
+        Assert.Contains(joined.Cells, c => c.RowId == "b0" && c.Col == 2 && c.Value == "snapshot-2");
+        Assert.Contains(joined.Cells, c => c.RowId == "b1" && c.Col == 0 && c.Value == "after-the-snapshot");
+    }
+
+    private const string NewRow = "0123456789abcdef0123456789abcdef";
+
+    [Fact]
+    public async Task A_restart_restores_an_inserted_row_and_the_cell_edited_in_it()
+    {
+        await using (var app = NewApp())
+        {
+            await using var connection = await ConnectAsync(app);
+            await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233", Protocol.Version);
+
+            // The row and a cell in it travel in one batch: rows are applied first.
+            var result = await connection.InvokeAsync<ApplyResult>(
+                "ApplyOps",
+                new RowOp?[] { new(NewRow, "0000k") },
+                new CellOp?[] { new(NewRow, 3, "in the new row", new HlcTimestamp(1, 0, "node-a")) });
+            Assert.Equal(2, result.Accepted);
+            Assert.Empty(result.Rejected);
+
+            await WaitForLoggedAsync("demo", count: 2);
+        }
+
+        await using var restarted = NewApp();
+        await using var connection2 = await ConnectAsync(restarted);
+        var joined = await connection2.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-b", "Bob", "#445566", Protocol.Version);
+
+        Assert.Contains(joined.InsertedRows, r => r.RowId == NewRow && r.Key == "0000k");
+        Assert.Contains(joined.Cells, c => c.RowId == NewRow && c.Col == 3 && c.Value == "in the new row");
     }
 
     [Fact]
@@ -151,11 +181,11 @@ public class PersistenceIntegrationTests : IAsyncLifetime
         await using (var app = NewApp())
         {
             await using var connection = await ConnectAsync(app);
-            await connection.InvokeAsync<JoinResult>("JoinSheet", "sheet-one", "node-a", "Alice", "#112233");
-            await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(0, 0, "one", 1) });
+            await connection.InvokeAsync<JoinResult>("JoinSheet", "sheet-one", "node-a", "Alice", "#112233", Protocol.Version);
+            await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(0, 0, "one", 1) });
 
-            await connection.InvokeAsync<JoinResult>("JoinSheet", "sheet-two", "node-a", "Alice", "#112233");
-            await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(0, 0, "two", 1) });
+            await connection.InvokeAsync<JoinResult>("JoinSheet", "sheet-two", "node-a", "Alice", "#112233", Protocol.Version);
+            await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(0, 0, "two", 1) });
 
             await WaitForLoggedAsync("sheet-one", 1);
             await WaitForLoggedAsync("sheet-two", 1);
@@ -163,8 +193,8 @@ public class PersistenceIntegrationTests : IAsyncLifetime
 
         await using var restarted = NewApp();
         await using var connection2 = await ConnectAsync(restarted);
-        var one = await connection2.InvokeAsync<JoinResult>("JoinSheet", "sheet-one", "node-b", "Bob", "#445566");
-        var two = await connection2.InvokeAsync<JoinResult>("JoinSheet", "sheet-two", "node-b", "Bob", "#445566");
+        var one = await connection2.InvokeAsync<JoinResult>("JoinSheet", "sheet-one", "node-b", "Bob", "#445566", Protocol.Version);
+        var two = await connection2.InvokeAsync<JoinResult>("JoinSheet", "sheet-two", "node-b", "Bob", "#445566", Protocol.Version);
 
         Assert.Single(one.Cells);
         Assert.Equal("one", one.Cells[0].Value);
@@ -182,8 +212,8 @@ public class PersistenceIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder => builder.UseSetting("ConnectionStrings:GridSync", string.Empty));
         await using var connection = await ConnectAsync(app);
 
-        await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233");
-        var result = await connection.InvokeAsync<ApplyResult>("ApplyOps", new CellOp?[] { Op(0, 0, "hello", 1) });
+        await connection.InvokeAsync<JoinResult>("JoinSheet", "demo", "node-a", "Alice", "#112233", Protocol.Version);
+        var result = await connection.InvokeAsync<ApplyResult>("ApplyOps", Array.Empty<RowOp?>(), new CellOp?[] { Op(0, 0, "hello", 1) });
 
         Assert.Equal(1, result.Accepted);
     }

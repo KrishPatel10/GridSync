@@ -13,6 +13,9 @@ public sealed class SheetSnapshot
     /// <summary>Every winning write, tombstones included, as JSON. Same shape as SheetState.Snapshot().</summary>
     public required string CellsJson { get; set; }
 
+    /// <summary>Every inserted row, as JSON. The sheet's initial rows are implicit and are not listed.</summary>
+    public string RowsJson { get; set; } = "[]";
+
     public long UpToOpId { get; set; }
     public DateTimeOffset WrittenAtUtc { get; set; }
 }

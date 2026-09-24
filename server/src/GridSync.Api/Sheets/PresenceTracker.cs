@@ -4,7 +4,7 @@ namespace GridSync.Api.Sheets;
 
 /// <summary>Who is looking at which sheet, and which cell they have selected.</summary>
 /// <param name="NodeId">The replica id this user stamps on its edits, so others can tell whose edit just landed.</param>
-public sealed record UserPresence(string ConnectionId, string NodeId, string Name, string Color, int? Row, int? Col);
+public sealed record UserPresence(string ConnectionId, string NodeId, string Name, string Color, string? RowId, int? Col);
 
 public sealed record PresenceSession(string SheetId, UserPresence User);
 
@@ -27,11 +27,11 @@ public sealed class PresenceTracker
     public PresenceSession? Get(string connectionId) =>
         _sessions.TryGetValue(connectionId, out var session) ? session : null;
 
-    public PresenceSession? UpdateSelection(string connectionId, int row, int col)
+    public PresenceSession? UpdateSelection(string connectionId, string rowId, int col)
     {
         while (_sessions.TryGetValue(connectionId, out var current))
         {
-            var updated = current with { User = current.User with { Row = row, Col = col } };
+            var updated = current with { User = current.User with { RowId = rowId, Col = col } };
             if (_sessions.TryUpdate(connectionId, updated, current)) return updated;
         }
 

@@ -11,7 +11,7 @@ public class SheetRestorerTests
     {
         Id = id,
         SheetId = "demo",
-        Row = row,
+        RowId = "b" + row,
         Col = col,
         Value = value,
         WallMs = wallMs,
@@ -31,7 +31,7 @@ public class SheetRestorerTests
     [Fact]
     public void Restores_from_a_snapshot_alone()
     {
-        var cells = new List<CellOp> { new(0, 0, "hello", new HlcTimestamp(1, 0, "n")) };
+        var cells = new List<CellOp> { new("b0", 0, "hello", new HlcTimestamp(1, 0, "n")) };
         var snapshot = new SheetSnapshot
         {
             SheetId = "demo",
@@ -42,14 +42,14 @@ public class SheetRestorerTests
 
         var state = SheetRestorer.Restore("demo", Dims, snapshot, tail: []);
 
-        Assert.Equal("hello", state.Get(0, 0)?.Value);
+        Assert.Equal("hello", state.Get("b0", 0)?.Value);
         Assert.Equal(1, state.FilledCount);
     }
 
     [Fact]
     public void Replays_the_tail_after_the_snapshot()
     {
-        var cells = new List<CellOp> { new(0, 0, "old", new HlcTimestamp(1, 0, "n")) };
+        var cells = new List<CellOp> { new("b0", 0, "old", new HlcTimestamp(1, 0, "n")) };
         var snapshot = new SheetSnapshot
         {
             SheetId = "demo",
@@ -61,8 +61,8 @@ public class SheetRestorerTests
 
         var state = SheetRestorer.Restore("demo", Dims, snapshot, tail);
 
-        Assert.Equal("new", state.Get(0, 0)?.Value); // the tail's write beat the snapshot's
-        Assert.Equal("second cell", state.Get(1, 0)?.Value);
+        Assert.Equal("new", state.Get("b0", 0)?.Value); // the tail's write beat the snapshot's
+        Assert.Equal("second cell", state.Get("b1", 0)?.Value);
         Assert.Equal(2, state.FilledCount);
     }
 
@@ -80,7 +80,7 @@ public class SheetRestorerTests
         // This can genuinely happen: the tail is "logged after the snapshot", not "happened after
         // the snapshot's values" -- a slightly-behind clock can log an op with an older HLC
         // timestamp than something the snapshot already reflects. Replay must not undo it.
-        var cells = new List<CellOp> { new(0, 0, "newer, already in the snapshot", new HlcTimestamp(100, 0, "n")) };
+        var cells = new List<CellOp> { new("b0", 0, "newer, already in the snapshot", new HlcTimestamp(100, 0, "n")) };
         var snapshot = new SheetSnapshot
         {
             SheetId = "demo",
@@ -92,7 +92,7 @@ public class SheetRestorerTests
 
         var state = SheetRestorer.Restore("demo", Dims, snapshot, tail);
 
-        Assert.Equal("newer, already in the snapshot", state.Get(0, 0)?.Value);
+        Assert.Equal("newer, already in the snapshot", state.Get("b0", 0)?.Value);
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public class SheetRestorerTests
     {
         // The situation SnapshotService's doc comment describes: the snapshot already reflects an
         // op that the tail also contains (write-behind lag). Idempotent merge makes this safe.
-        var cells = new List<CellOp> { new(0, 0, "x", new HlcTimestamp(5, 0, "n")) };
+        var cells = new List<CellOp> { new("b0", 0, "x", new HlcTimestamp(5, 0, "n")) };
         var snapshot = new SheetSnapshot
         {
             SheetId = "demo",
@@ -112,14 +112,14 @@ public class SheetRestorerTests
 
         var state = SheetRestorer.Restore("demo", Dims, snapshot, tail);
 
-        Assert.Equal("x", state.Get(0, 0)?.Value);
+        Assert.Equal("x", state.Get("b0", 0)?.Value);
         Assert.Equal(1, state.FilledCount);
     }
 
     [Fact]
     public void A_cleared_cell_in_the_tail_stays_cleared()
     {
-        var cells = new List<CellOp> { new(0, 0, "will be cleared", new HlcTimestamp(1, 0, "n")) };
+        var cells = new List<CellOp> { new("b0", 0, "will be cleared", new HlcTimestamp(1, 0, "n")) };
         var snapshot = new SheetSnapshot
         {
             SheetId = "demo",
@@ -131,7 +131,7 @@ public class SheetRestorerTests
 
         var state = SheetRestorer.Restore("demo", Dims, snapshot, tail);
 
-        Assert.True(state.Get(0, 0) is { Value: null }); // a tombstone, not "never written"
+        Assert.True(state.Get("b0", 0) is { Value: null }); // a tombstone, not "never written"
         Assert.Equal(0, state.FilledCount);
     }
 
@@ -139,17 +139,59 @@ public class SheetRestorerTests
     public void ToSnapshot_round_trips_through_JSON_and_Restore()
     {
         var live = new SheetState("demo", Dims);
-        live.Apply(new CellOp(0, 0, "a", new HlcTimestamp(1, 0, "n")));
-        live.Apply(new CellOp(2, 3, "b", new HlcTimestamp(2, 0, "n")));
+        live.Apply(new CellOp("b0", 0, "a", new HlcTimestamp(1, 0, "n")));
+        live.Apply(new CellOp("b2", 3, "b", new HlcTimestamp(2, 0, "n")));
 
         var snapshot = SheetRestorer.ToSnapshot(live, upToOpId: 42, TimeProvider.System);
         Assert.Equal("demo", snapshot.SheetId);
         Assert.Equal(42, snapshot.UpToOpId);
 
         var restored = SheetRestorer.Restore("demo", Dims, snapshot, tail: []);
-        Assert.Equal("a", restored.Get(0, 0)?.Value);
-        Assert.Equal("b", restored.Get(2, 3)?.Value);
+        Assert.Equal("a", restored.Get("b0", 0)?.Value);
+        Assert.Equal("b", restored.Get("b2", 3)?.Value);
         Assert.Equal(2, restored.FilledCount);
+    }
+
+    private const string RowId = "0123456789abcdef0123456789abcdef";
+
+    [Fact]
+    public void A_snapshot_carries_inserted_rows_and_the_cells_in_them()
+    {
+        var live = new SheetState("demo", Dims);
+        live.InsertRow(new RowOp(RowId, "0000k"));
+        live.Apply(new CellOp(RowId, 1, "in the new row", new HlcTimestamp(1, 0, "n")));
+
+        var snapshot = SheetRestorer.ToSnapshot(live, upToOpId: 1, TimeProvider.System);
+        var restored = SheetRestorer.Restore("demo", Dims, snapshot, tail: []);
+
+        Assert.True(restored.HasRow(RowId));
+        Assert.Equal("0000k", restored.RowKey(RowId));
+        Assert.Equal("in the new row", restored.Get(RowId, 1)?.Value);
+    }
+
+    [Fact]
+    public void Row_inserts_in_the_tail_are_replayed()
+    {
+        var tail = new[]
+        {
+            new OpLogEntry { Id = 1, SheetId = "demo", RowId = RowId, RowKey = "0000k", NodeId = "" },
+            new OpLogEntry { Id = 2, SheetId = "demo", RowId = RowId, Col = 0, Value = "hi", WallMs = 5, NodeId = "n" },
+        };
+
+        var state = SheetRestorer.Restore("demo", Dims, snapshot: null, tail);
+
+        Assert.Equal("0000k", state.RowKey(RowId));
+        Assert.Equal("hi", state.Get(RowId, 0)?.Value);
+    }
+
+    [Fact]
+    public void A_row_insert_is_logged_as_a_row_and_not_as_a_cell_edit()
+    {
+        var entry = SheetRestorer.ToLogEntry("demo", new RowOp(RowId, "0000k"));
+
+        Assert.Equal("0000k", entry.RowKey);
+        Assert.Equal(RowId, entry.RowId);
+        Assert.Null(SheetRestorer.ToLogEntry("demo", new CellOp("b0", 0, "x", new HlcTimestamp(1, 0, "n"))).RowKey);
     }
 
     [Fact]
@@ -161,14 +203,14 @@ public class SheetRestorerTests
         // starting at 1, so re-fetch to know the real one).
         var latest = await store.GetLatestOpIdAsync("demo");
         var state = new SheetState("demo", Dims);
-        state.Apply(new CellOp(0, 0, "will be in the snapshot", new HlcTimestamp(1, 0, "n")));
+        state.Apply(new CellOp("b0", 0, "will be in the snapshot", new HlcTimestamp(1, 0, "n")));
         await store.SaveSnapshotAsync(SheetRestorer.ToSnapshot(state, latest, TimeProvider.System));
 
         await store.AppendAsync([Entry(0, 1, 0, "after the snapshot", wallMs: 2)]);
 
         var restored = await SheetRestorer.RestoreAsync(store, "demo", Dims);
 
-        Assert.Equal("will be in the snapshot", restored.Get(0, 0)?.Value);
-        Assert.Equal("after the snapshot", restored.Get(1, 0)?.Value);
+        Assert.Equal("will be in the snapshot", restored.Get("b0", 0)?.Value);
+        Assert.Equal("after the snapshot", restored.Get("b1", 0)?.Value);
     }
 }

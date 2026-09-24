@@ -30,8 +30,11 @@ public sealed partial class SheetHub(
     /// An edit landing in that window may arrive twice (in the snapshot and as a broadcast),
     /// which is harmless because LWW merges are idempotent.
     /// </summary>
-    public async Task<JoinResult> JoinSheet(string sheetId, string nodeId, string name, string color)
+    public async Task<JoinResult> JoinSheet(string sheetId, string nodeId, string name, string color, int protocolVersion)
     {
+        if (protocolVersion != Protocol.Version)
+            throw new HubException("This page is out of date. Reload it to keep editing.");
+
         if (string.IsNullOrEmpty(sheetId) || !IdPattern().IsMatch(sheetId))
             throw new HubException("Sheet names can use 1 to 64 letters, digits, hyphens, or underscores.");
 
@@ -67,6 +70,7 @@ public sealed partial class SheetHub(
             sheet.Dimensions.Rows,
             sheet.Dimensions.Cols,
             connectionId,
+            sheet.RowSnapshot(),
             sheet.Snapshot(),
             presence.UsersIn(sheetId, exceptConnectionId: connectionId));
     }
@@ -76,30 +80,59 @@ public sealed partial class SheetHub(
     /// (already beaten by a newer write) are counted but not broadcast, since every other replica
     /// either already has the newer value or will receive it.
     /// </summary>
-    public async Task<ApplyResult> ApplyOps(CellOp?[] ops)
+    public async Task<ApplyResult> ApplyOps(RowOp?[] rows, CellOp?[] ops)
     {
         var session = presence.Get(Context.ConnectionId)
             ?? throw new HubException("Join a sheet before sending edits.");
 
-        if (ops.Length > validator.Limits.MaxOpsPerBatch)
+        if (rows.Length + ops.Length > validator.Limits.MaxOpsPerBatch)
             throw new HubException($"Send at most {validator.Limits.MaxOpsPerBatch} edits per batch.");
 
         var sheet = store.Find(session.SheetId)
             ?? throw new HubException("This sheet is no longer available. Reload to rejoin.");
 
+        var acceptedRows = new List<RowOp>(rows.Length);
         var accepted = new List<CellOp>(ops.Length);
         var rejected = new List<RejectedOp>();
         var stale = 0;
 
-        for (var i = 0; i < ops.Length; i++)
+        // Rows first, so a cell edit in a row created by this same batch finds its row.
+        for (var i = 0; i < rows.Length; i++)
         {
-            if (ops[i] is not { } op)
+            if (rows[i] is not { } row)
+            {
+                rejected.Add(new RejectedOp(i, "Empty row"));
+                continue;
+            }
+
+            var problem = validator.Validate(row, sheet);
+            if (problem != OpRejection.None)
+            {
+                rejected.Add(new RejectedOp(i, problem.ToString()));
+                continue;
+            }
+
+            if (sheet.InsertRow(row))
+            {
+                acceptedRows.Add(row);
+                opLog.Enqueue(sheet.Id, row);
+            }
+            else
+            {
+                stale++; // already had it
+            }
+        }
+
+        for (var n = 0; n < ops.Length; n++)
+        {
+            var i = rows.Length + n; // rejections are numbered across the whole batch
+            if (ops[n] is not { } op)
             {
                 rejected.Add(new RejectedOp(i, "Empty edit"));
                 continue;
             }
 
-            var problem = validator.Validate(op, sheet.Dimensions);
+            var problem = validator.Validate(op, sheet);
             if (problem != OpRejection.None)
             {
                 rejected.Add(new RejectedOp(i, problem.ToString()));
@@ -125,23 +158,23 @@ public sealed partial class SheetHub(
             }
         }
 
-        if (accepted.Count > 0)
-            await Clients.OthersInGroup(GroupFor(sheet.Id)).OpsApplied(accepted);
+        if (acceptedRows.Count > 0 || accepted.Count > 0)
+            await Clients.OthersInGroup(GroupFor(sheet.Id)).OpsApplied(acceptedRows, accepted);
 
-        Log.Applied(logger, sheet.Id, accepted.Count, stale, rejected.Count);
-        return new ApplyResult(accepted.Count, stale, rejected);
+        Log.Applied(logger, sheet.Id, acceptedRows.Count + accepted.Count, stale, rejected.Count);
+        return new ApplyResult(acceptedRows.Count + accepted.Count, stale, rejected);
     }
 
     /// <summary>Shares this user's selected cell so others can see where they are.</summary>
-    public async Task SelectCell(int row, int col)
+    public async Task SelectCell(string rowId, int col)
     {
         var current = presence.Get(Context.ConnectionId);
         if (current is null) return;
 
-        var dims = store.Find(current.SheetId)?.Dimensions;
-        if (dims is null || row < 0 || row >= dims.Value.Rows || col < 0 || col >= dims.Value.Cols) return;
+        var sheet = store.Find(current.SheetId);
+        if (sheet is null || rowId is null || !sheet.HasRow(rowId) || col < 0 || col >= sheet.Dimensions.Cols) return;
 
-        var updated = presence.UpdateSelection(Context.ConnectionId, row, col);
+        var updated = presence.UpdateSelection(Context.ConnectionId, rowId, col);
         if (updated is not null)
             await Clients.OthersInGroup(GroupFor(updated.SheetId)).PresenceChanged(updated.User);
     }
