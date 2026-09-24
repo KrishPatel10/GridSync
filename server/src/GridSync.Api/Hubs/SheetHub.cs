@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using GridSync.Api.Persistence;
 using GridSync.Api.Sheets;
 using GridSync.Core;
 using Microsoft.AspNetCore.SignalR;
@@ -9,6 +10,7 @@ public sealed partial class SheetHub(
     SheetStore store,
     PresenceTracker presence,
     OpValidator validator,
+    OpLogChannel opLog,
     ILogger<SheetHub> logger) : Hub<ISheetClient>
 {
     private const string DefaultColor = "#2456D6";
@@ -39,7 +41,7 @@ public sealed partial class SheetHub(
         SheetState sheet;
         try
         {
-            sheet = store.GetOrCreate(sheetId);
+            sheet = await store.GetOrCreateAsync(sheetId);
         }
         catch (SheetLimitReachedException ex)
         {
@@ -112,8 +114,15 @@ public sealed partial class SheetHub(
                 continue;
             }
 
-            if (sheet.Apply(op)) accepted.Add(op);
-            else stale++;
+            if (sheet.Apply(op))
+            {
+                accepted.Add(op);
+                opLog.Enqueue(sheet.Id, op); // write-behind: queued, not written here (see OpLogChannel)
+            }
+            else
+            {
+                stale++;
+            }
         }
 
         if (accepted.Count > 0)
