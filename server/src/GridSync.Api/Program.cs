@@ -70,17 +70,30 @@ if (usingDatabase)
     var factory = app.Services.GetRequiredService<IDbContextFactory<GridSyncDbContext>>();
     await using var db = await factory.CreateDbContextAsync();
 
-    if (!string.IsNullOrWhiteSpace(testSqlitePath))
+    try
     {
-        // The test-only path: no migration history to maintain for a throwaway per-test file, and
-        // the migrations were generated against SQL Server's conventions, which EF Core correctly
-        // refuses to apply as-is against a different provider (PendingModelChangesWarning). Just
-        // create the schema straight from the current model instead.
-        await db.Database.EnsureCreatedAsync();
+        if (!string.IsNullOrWhiteSpace(testSqlitePath))
+        {
+            // The test-only path: no migration history to maintain for a throwaway per-test file, and
+            // the migrations were generated against SQL Server's conventions, which EF Core correctly
+            // refuses to apply as-is against a different provider (PendingModelChangesWarning). Just
+            // create the schema straight from the current model instead.
+            await db.Database.EnsureCreatedAsync();
+        }
+        else
+        {
+            await db.Database.MigrateAsync();
+        }
     }
-    else
+    catch (Exception ex) when (ex is Microsoft.Data.SqlClient.SqlException or InvalidOperationException)
     {
-        await db.Database.MigrateAsync();
+        // One clear line instead of a stack trace nobody can act on. Still fatal on purpose.
+        app.Logger.LogCritical(
+            "Cannot reach the configured database ({Reason}). Start it with `docker compose up -d` from the repo root " +
+            "and try again, or run without persistence by clearing the connection string: " +
+            "`dotnet run --project src/GridSync.Api -- --ConnectionStrings:GridSync=`",
+            ex.GetBaseException().Message);
+        return 1;
     }
 }
 
@@ -94,6 +107,7 @@ app.MapGet("/api/sheets/{id}", (string id, SheetStore store) =>
 app.MapHub<SheetHub>("/hubs/sheet");
 
 app.Run();
+return 0;
 
 // Lets GridSync.Api.Tests use WebApplicationFactory<Program>.
 public partial class Program;
