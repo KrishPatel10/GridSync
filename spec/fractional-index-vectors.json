@@ -1,0 +1,33 @@
+{
+  "description": "Conformance vectors for fractional index keys. The C# (xUnit) and TypeScript (Vitest) implementations must produce exactly these. between: the key Between(before, after) returns (null before or after means unbounded). invalid: Between must reject these arguments. baseRows: the key of the Nth initial row.",
+  "between": [
+    { "before": "", "after": null, "expected": "V" },
+    { "before": null, "after": null, "expected": "V" },
+    { "before": "V", "after": null, "expected": "l" },
+    { "before": "", "after": "V", "expected": "G" },
+    { "before": "V", "after": "l", "expected": "d" },
+    { "before": "1", "after": "2", "expected": "1V" },
+    { "before": "1", "after": "105", "expected": "103" },
+    { "before": "1V", "after": "2", "expected": "1l" },
+    { "before": "z", "after": null, "expected": "zV" },
+    { "before": "", "after": "1", "expected": "0V" },
+    { "before": "0V", "after": "1", "expected": "0l" },
+    { "before": "V", "after": "W", "expected": "VV" },
+    { "before": "VV", "after": "W", "expected": "Vl" }
+  ],
+  "invalid": [
+    { "before": "V", "after": "V" },
+    { "before": "l", "after": "V" },
+    { "before": "V0", "after": null },
+    { "before": "V-", "after": null },
+    { "before": "V", "after": "" },
+    { "before": "V", "after": "W0" }
+  ],
+  "baseRows": [
+    { "index": 0, "expected": "0000V" },
+    { "index": 1, "expected": "0001V" },
+    { "index": 61, "expected": "000zV" },
+    { "index": 62, "expected": "0010V" },
+    { "index": 99999, "expected": "0Q0tV" }
+  ]
+}
