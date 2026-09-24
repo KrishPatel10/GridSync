@@ -12,6 +12,17 @@ import {
 } from '@angular/core';
 import { SheetSyncService } from '../sync/sheet-sync.service';
 import { cellAddress, columnName, parseClipboardGrid } from './cell-address';
+import {
+  cellAtPoint,
+  isSingleCell,
+  Pos,
+  rangeContains,
+  rangeHeight,
+  rangeLabel,
+  rangeOf,
+  rangeToClipboardText,
+  rangeWidth,
+} from './selection';
 
 /** Geometry. Rows must all be the same height: that's what makes "which rows are visible" pure arithmetic. */
 const ROW_H = 30;
@@ -22,11 +33,6 @@ const COL_W = 128;
 const OVERSCAN = 8;
 /** Numbers like 42, -3.5, 1,250,000, or 12% sit right-aligned, as in any spreadsheet. */
 const NUMERIC = /^[-+]?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?%?$/;
-
-interface Pos {
-  row: number;
-  col: number;
-}
 
 /**
  * A hand-rolled virtualized grid. The sheet has 100,000 rows, but only the ~40 on screen
@@ -59,8 +65,30 @@ export class Grid {
   private readonly scrollTop = signal(0);
   private readonly viewportSize = signal({ width: 0, height: 0 });
 
+  /**
+   * The active cell: where typing, the editor, the formula bar and other people's cursors point.
+   * The selection is the rectangle between it and `anchor`, which is where the selection started.
+   * They are equal for an ordinary single-cell selection.
+   */
   protected readonly selected = signal<Pos>({ row: 0, col: 0 });
+  private readonly anchor = signal<Pos>({ row: 0, col: 0 });
+  private dragging = false;
   protected readonly editing = signal<Pos | null>(null);
+
+  protected readonly range = computed(() => rangeOf(this.anchor(), this.selected()));
+  protected readonly isMultiCell = computed(() => !isSingleCell(this.range()));
+
+  /** Where to draw the selection rectangle, in canvas pixels: one element, however many cells it covers. */
+  protected readonly rangeBox = computed(() => {
+    const r = this.range();
+    if (isSingleCell(r) || this.editing()) return null;
+    return {
+      top: HEADER_H + r.top * ROW_H,
+      left: ROW_HEADER_W + r.left * COL_W,
+      height: rangeHeight(r) * ROW_H,
+      width: rangeWidth(r) * COL_W,
+    };
+  });
   protected readonly draft = signal('');
 
   protected readonly columns = computed(() => Array.from({ length: this.sync.dims().cols }, (_, i) => i));
@@ -85,7 +113,8 @@ export class Grid {
 
   protected readonly offsetY = computed(() => HEADER_H + this.window().start * ROW_H);
 
-  protected readonly address = computed(() => cellAddress(this.selected().row, this.selected().col));
+  /** "B2" for one cell, "B2:D5" for a block. The formula bar still shows the active cell's contents. */
+  protected readonly address = computed(() => rangeLabel(this.range()));
   protected readonly selectedValue = computed(() => {
     const editing = this.editing();
     if (editing) return this.draft();
@@ -126,6 +155,17 @@ export class Grid {
     return s.row === row && s.col === col;
   }
 
+  /** Headers light up for every row and column the selection touches, not only the active cell's. */
+  protected isRowSelected(row: number): boolean {
+    const r = this.range();
+    return row >= r.top && row <= r.bottom;
+  }
+
+  protected isColSelected(col: number): boolean {
+    const r = this.range();
+    return col >= r.left && col <= r.right;
+  }
+
   protected isNumeric(value: string): boolean {
     return value !== '' && /\d/.test(value) && NUMERIC.test(value);
   }
@@ -143,10 +183,44 @@ export class Grid {
 
   protected onCellMouseDown(event: MouseEvent, row: number, col: number): void {
     if (this.isEditing(row, col)) return; // let the click place the caret inside the editor
+    if (event.button !== 0) return; // right click keeps the current selection for a context menu
     event.preventDefault(); // keep focus on the grid instead of the cell div
     this.commitEdit();
-    this.select(row, col);
+    // Shift+click extends from where the selection started; a plain click starts a new one and,
+    // as long as the button stays down, dragging extends it (see onDocumentMouseMove).
+    this.select(row, col, event.shiftKey);
+    this.dragging = true;
     this.viewport().nativeElement.focus();
+  }
+
+  /**
+   * Listens on the document, not the grid, so a drag that leaves the grid keeps working. Works out
+   * the cell from the pointer position rather than from mouseenter on each cell: there are hundreds
+   * of cells, and this also handles the pointer being beyond the edge (it clamps, and select()
+   * scrolls the new corner into view, which is what makes dragging past the edge scroll).
+   */
+  protected onDocumentMouseMove(event: MouseEvent): void {
+    if (!this.dragging) return;
+    if (event.buttons === 0) {
+      this.dragging = false; // the button was released outside the window, where we never heard about it
+      return;
+    }
+
+    const el = this.viewport().nativeElement;
+    const box = el.getBoundingClientRect();
+    const target = cellAtPoint(
+      event.clientX - box.left + el.scrollLeft,
+      event.clientY - box.top + el.scrollTop,
+      { rowHeight: ROW_H, colWidth: COL_W, headerHeight: HEADER_H, rowHeaderWidth: ROW_HEADER_W },
+      this.sync.dims(),
+    );
+
+    const active = this.selected();
+    if (target.row !== active.row || target.col !== active.col) this.select(target.row, target.col, true);
+  }
+
+  protected onDocumentMouseUp(): void {
+    this.dragging = false;
   }
 
   protected onCellDoubleClick(row: number, col: number): void {
@@ -168,9 +242,23 @@ export class Grid {
       return;
     }
 
+    if (jump && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      this.selectAll();
+      return;
+    }
+    if (event.key === 'Escape' && this.isMultiCell()) {
+      event.preventDefault();
+      this.anchor.set(this.selected()); // back to just the active cell
+      return;
+    }
+
     const { row, col } = this.selected();
     const { rows, cols } = this.sync.dims();
     const pageRows = Math.max(1, Math.floor((this.viewportSize().height - HEADER_H) / ROW_H) - 1);
+    // Shift with a movement key stretches the selection instead of moving it. Shift+Tab already
+    // means "previous cell", so it is not an extension.
+    const extend = event.shiftKey && event.key !== 'Tab';
 
     const moves: Record<string, () => Pos> = {
       ArrowUp: () => ({ row: jump ? 0 : row - 1, col }),
@@ -190,7 +278,7 @@ export class Grid {
     if (move) {
       event.preventDefault();
       const to = move();
-      this.select(to.row, to.col);
+      this.select(to.row, to.col, extend);
       return;
     }
 
@@ -199,7 +287,7 @@ export class Grid {
       this.beginEdit(row, col);
     } else if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
-      this.sync.setCell(row, col, null);
+      this.clearSelection();
     } else if (event.key.length === 1 && !jump && !event.altKey) {
       // Typing on a selected cell replaces its contents, like any spreadsheet.
       event.preventDefault();
@@ -236,8 +324,10 @@ export class Grid {
 
   protected onCopy(event: ClipboardEvent): void {
     if (this.editing()) return; // native copy inside the text box
-    const { row, col } = this.selected();
-    event.clipboardData?.setData('text/plain', this.sync.valueAt(row, col));
+    event.clipboardData?.setData(
+      'text/plain',
+      rangeToClipboardText(this.range(), (row, col) => this.sync.valueAt(row, col)),
+    );
     event.preventDefault();
   }
 
@@ -247,24 +337,56 @@ export class Grid {
     if (grid.length === 0) return;
     event.preventDefault();
 
-    const { row, col } = this.selected();
+    // Pastes at the top-left of the selection, like Excel, however the selection was dragged.
+    const { top: row, left: col } = this.range();
     const { rows, cols } = this.sync.dims();
+    let lastRow = row;
+    let lastCol = col;
     // All of these land in the same microtask, so they sync as one batched ApplyOps call.
     grid.forEach((line, r) =>
       line.forEach((value, c) => {
-        if (row + r < rows && col + c < cols) this.sync.setCell(row + r, col + c, value);
+        if (row + r >= rows || col + c >= cols) return;
+        this.sync.setCell(row + r, col + c, value);
+        lastRow = Math.max(lastRow, row + r);
+        lastCol = Math.max(lastCol, col + c);
       }),
     );
+
+    // Select what was pasted, so you can see how far it went.
+    this.anchor.set({ row, col });
+    this.selected.set({ row: lastRow, col: lastCol });
+    this.sync.shareSelection(lastRow, lastCol);
   }
 
   // ----- actions ---------------------------------------------------------------------------
 
-  private select(row: number, col: number): void {
+  /** Moves the active cell. With `extend`, the anchor stays put, so the selection stretches to it. */
+  private select(row: number, col: number, extend = false): void {
     const { rows, cols } = this.sync.dims();
     const next = { row: clamp(row, 0, rows - 1), col: clamp(col, 0, cols - 1) };
+    if (!extend) this.anchor.set(next);
     this.selected.set(next);
     this.scrollIntoView(next);
     this.sync.shareSelection(next.row, next.col);
+  }
+
+  /**
+   * Everything, with the active cell left where it was: like Excel, typing after Ctrl+A still
+   * edits the cell you were on. (The anchor is the far corner, the active cell stays.)
+   */
+  private selectAll(): void {
+    const { rows, cols } = this.sync.dims();
+    this.anchor.set({ row: rows - 1, col: cols - 1 });
+    this.selected.set({ row: 0, col: 0 });
+    this.sync.shareSelection(0, 0);
+  }
+
+  /** Clears every cell in the selection. Cells that are already empty create no edits. */
+  private clearSelection(): void {
+    const r = this.range();
+    for (let row = r.top; row <= r.bottom; row++) {
+      for (let col = r.left; col <= r.right; col++) this.sync.setCell(row, col, null);
+    }
   }
 
   private beginEdit(row: number, col: number, initial?: string): void {

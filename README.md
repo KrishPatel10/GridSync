@@ -40,6 +40,7 @@ The server's Development config (`appsettings.Development.json`, used automatica
 6. Type `10` in A1 and `=A1*2` in B1. B1 shows `20`, and the formula bar shows the formula. Change A1 in the *other* window and watch B1 follow in both. Then type `=B1` in A1 to make a loop: both cells show `#CYCLE!`, and go back to normal when you break it.
 7. Press **Go offline**, type something, then close the tab entirely (not just Go online first). Reopen `http://localhost:4200` with the same `?sheet=` a little later: the edit is there, and it syncs on its own once the page is live.
 8. With `docker compose up -d` running, type in a cell, wait a couple of seconds, then stop the server (Ctrl+C in its terminal) and start it again. Reload the browser: the cell is still there. The server never remembered it in memory across that restart; SQL Server did.
+9. Drag across cells, or click one and press Shift plus an arrow key, to select a block. The address box shows it as `B2:D5`, Delete clears the whole block, Ctrl+C copies it as tab-separated text, and pasting drops the same shape at the block's top-left corner. Ctrl+A selects everything and Escape collapses back to one cell. Other people still see only your active cell, not your block.
 
 ## How it works
 

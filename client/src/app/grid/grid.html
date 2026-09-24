@@ -16,6 +16,8 @@
   (keydown)="onGridKeydown($event)"
   (copy)="onCopy($event)"
   (paste)="onPaste($event)"
+  (document:mousemove)="onDocumentMouseMove($event)"
+  (document:mouseup)="onDocumentMouseUp()"
 >
   <div class="canvas" [style.height.px]="canvasHeight()" [style.width.px]="canvasWidth()">
     <div class="col-headers" role="row" aria-rowindex="1" [style.height.px]="HEADER_H">
@@ -25,7 +27,7 @@
           class="col-header"
           role="columnheader"
           [attr.aria-colindex]="c + 2"
-          [class.active]="c === selected().col"
+          [class.active]="isColSelected(c)"
           [style.width.px]="COL_W"
         >
           {{ columnName(c) }}
@@ -33,13 +35,24 @@
       }
     </div>
 
+    @if (rangeBox(); as box) {
+      <div
+        class="range"
+        aria-hidden="true"
+        [style.top.px]="box.top"
+        [style.left.px]="box.left"
+        [style.width.px]="box.width"
+        [style.height.px]="box.height"
+      ></div>
+    }
+
     <div class="rows" [style.transform]="'translateY(' + offsetY() + 'px)'">
       @for (r of visibleRows(); track r) {
         <div class="row" role="row" [attr.aria-rowindex]="r + 2" [style.height.px]="ROW_H">
           <div
             class="row-header"
             role="rowheader"
-            [class.active]="r === selected().row"
+            [class.active]="isRowSelected(r)"
             [style.width.px]="ROW_HEADER_W"
           >
             {{ r + 1 }}

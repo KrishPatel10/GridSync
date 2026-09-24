@@ -156,6 +156,26 @@
   border-color: var(--ink-muted);
 }
 
+/*
+ * A block selection is one rectangle laid over the cells, not a class on each of them: however many
+ * thousands of cells it covers, it is a single element, and it never has to be virtualized. It sits
+ * below the sticky headers (z-index 2 and up) so it scrolls underneath them like the cells do. The
+ * active cell keeps its own ring on top.
+ */
+.range {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid var(--blueprint);
+  background: color-mix(in srgb, var(--blueprint) 12%, transparent);
+}
+
+.viewport:not(:focus-within) .range {
+  border-color: var(--ink-muted);
+  background: color-mix(in srgb, var(--ink-muted) 10%, transparent);
+}
+
 .editor {
   position: absolute;
   inset: -1px;

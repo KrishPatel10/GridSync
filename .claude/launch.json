@@ -4,7 +4,7 @@
     {
       "name": "server",
       "runtimeExecutable": "dotnet",
-      "runtimeArgs": ["run", "--project", "server/src/GridSync.Api"],
+      "runtimeArgs": ["run", "--project", "server/src/GridSync.Api", "--", "--ConnectionStrings:GridSync="],
       "port": 5080
     },
     {
