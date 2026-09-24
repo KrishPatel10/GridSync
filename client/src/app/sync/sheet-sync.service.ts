@@ -309,6 +309,29 @@ export class SheetSyncService {
     return raw.charAt(0) === '=' ? (this.formulaDisplays.get(cellKey(row, col)) ?? '') : raw;
   }
 
+  /**
+   * The displayed text of the non-empty cells in a block. Walks whichever is smaller, the block or
+   * the set of stored cells, so selecting the whole sheet doesn't visit 2.6 million empty cells.
+   */
+  displaysIn(block: { top: number; left: number; bottom: number; right: number }): string[] {
+    this._version();
+    const out: string[] = [];
+    const area = (block.bottom - block.top + 1) * (block.right - block.left + 1);
+
+    if (area <= this.cells.filledCount) {
+      for (let row = block.top; row <= block.bottom; row++) {
+        for (let col = block.left; col <= block.right; col++) out.push(this.displayAt(row, col));
+      }
+    } else {
+      this.cells.forEachFilled((row, col) => {
+        if (row >= block.top && row <= block.bottom && col >= block.left && col <= block.right) {
+          out.push(this.displayAt(row, col));
+        }
+      });
+    }
+    return out;
+  }
+
   peersAt(row: number, col: number): readonly UserPresence[] {
     return this.peersByCell().get(cellKey(row, col)) ?? NO_PEERS;
   }

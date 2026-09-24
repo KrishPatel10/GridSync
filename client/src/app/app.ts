@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, viewChild } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import { Grid } from './grid/grid';
+import { formatStat } from './grid/selection-stats';
 import { SheetSyncService } from './sync/sheet-sync.service';
 import { ThemePreference, ThemeService, nextTheme } from './theme/theme.service';
 
@@ -55,6 +56,27 @@ export class App {
   protected readonly filledLabel = computed(() => {
     const n = this.sync.filledCount();
     return n === 1 ? '1 cell filled' : `${n.toLocaleString()} cells filled`;
+  });
+
+  private readonly grid = viewChild.required(Grid);
+
+  /**
+   * Excel's status bar for the current selection: Average, Count, Sum when it holds numbers, and
+   * just Count when it is only text. Nothing for one cell or an empty block.
+   */
+  protected readonly statsLabels = computed(() => {
+    const stats = this.grid().stats();
+    if (!stats) return null;
+    const count = { name: 'Count', value: stats.count.toLocaleString() };
+    if (stats.numbers === 0) return [count];
+    return [
+      { name: 'Average', value: formatStat(stats.average) },
+      count,
+      ...(stats.numbers !== stats.count ? [{ name: 'Numerical count', value: stats.numbers.toLocaleString() }] : []),
+      { name: 'Min', value: formatStat(stats.min) },
+      { name: 'Max', value: formatStat(stats.max) },
+      { name: 'Sum', value: formatStat(stats.sum) },
+    ];
   });
 
   protected readonly pendingLabel = computed(() => {

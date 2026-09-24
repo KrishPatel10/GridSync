@@ -60,6 +60,13 @@
 <footer class="statusbar">
   <span>{{ sizeLabel() }}</span>
   <span>{{ filledLabel() }}</span>
+  @if (statsLabels(); as items) {
+    <span class="selection-stats" aria-label="Selection summary">
+      @for (item of items; track item.name) {
+        <span>{{ item.name }}: <strong>{{ item.value }}</strong></span>
+      }
+    </span>
+  }
   @if (sync.pendingCount() > 0) {
     <span class="pending">{{ pendingLabel() }}</span>
   }

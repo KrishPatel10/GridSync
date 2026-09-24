@@ -46,6 +46,13 @@ export class LwwCellMap {
     return this.filled;
   }
 
+  /** Calls `visit` for every cell holding a value. The cost is the number of stored cells, not the size of the sheet. */
+  forEachFilled(visit: (row: number, col: number, value: string) => void): void {
+    for (const [key, entry] of this.cells) {
+      if (entry.value !== null) visit(Math.floor(key / COL_SPACE), key % COL_SPACE, entry.value);
+    }
+  }
+
   /** Every winning write, tombstones included, in no particular order. */
   toOps(): CellOp[] {
     const ops: CellOp[] = [];

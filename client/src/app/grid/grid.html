@@ -12,10 +12,12 @@
   [attr.aria-rowcount]="sync.dims().rows + 1"
   [attr.aria-colcount]="sync.dims().cols + 1"
   [attr.aria-activedescendant]="activeCellId()"
-  (scroll)="onScroll()"
+  (scroll)="onScroll(); menu() && closeMenu()"
   (keydown)="onGridKeydown($event)"
   (copy)="onCopy($event)"
   (paste)="onPaste($event)"
+  (cut)="onCut($event)"
+  (document:mousedown)="onDocumentMouseDown($event)"
   (document:mousemove)="onDocumentMouseMove($event)"
   (document:mouseup)="onDocumentMouseUp()"
 >
@@ -74,6 +76,7 @@
               [style.width.px]="COL_W"
               (mousedown)="onCellMouseDown($event, r, c)"
               (dblclick)="onCellDoubleClick(r, c)"
+              (contextmenu)="onCellContextMenu($event, r, c)"
             >
               @if (isEditing(r, c)) {
                 <input
@@ -102,6 +105,25 @@
     </div>
   </div>
 </div>
+
+@if (menu(); as at) {
+  <div
+    class="context-menu"
+    role="menu"
+    aria-label="Cell actions"
+    [style.left.px]="at.x"
+    [style.top.px]="at.y"
+    (keydown)="onMenuKeydown($event)"
+    (contextmenu)="$event.preventDefault()"
+  >
+    <button type="button" role="menuitem" (click)="menuCut()">Cut<kbd>Ctrl+X</kbd></button>
+    <button type="button" role="menuitem" (click)="menuCopy()">Copy<kbd>Ctrl+C</kbd></button>
+    <button type="button" role="menuitem" (click)="menuPaste()">Paste<kbd>Ctrl+V</kbd></button>
+    <hr />
+    <button type="button" role="menuitem" (click)="menuClear()">Clear contents<kbd>Del</kbd></button>
+    <button type="button" role="menuitem" (click)="menuSelectAll()">Select all<kbd>Ctrl+A</kbd></button>
+  </div>
+}
 
 @if (sync.dims().rows === 0) {
   <div class="waiting" role="status">

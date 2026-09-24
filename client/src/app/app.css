@@ -179,6 +179,19 @@
   border-top: 1px solid var(--rule-strong);
 }
 
+.selection-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-left: auto;
+}
+
+.selection-stats strong {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 .pending {
   font-weight: 600;
   color: var(--warn);

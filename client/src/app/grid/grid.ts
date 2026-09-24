@@ -23,6 +23,7 @@ import {
   rangeToClipboardText,
   rangeWidth,
 } from './selection';
+import { SelectionStats, summarize } from './selection-stats';
 
 /** Geometry. Rows must all be the same height: that's what makes "which rows are visible" pure arithmetic. */
 const ROW_H = 30;
@@ -90,6 +91,14 @@ export class Grid {
     };
   });
   protected readonly draft = signal('');
+
+  /** Count, sum and so on for the footer. Only meaningful for more than one cell, like Excel. */
+  readonly stats = computed<SelectionStats | null>(() =>
+    this.isMultiCell() ? summarize(this.sync.displaysIn(this.range())) : null,
+  );
+
+  /** Where the right-click menu is open, in viewport pixels, or null when it is closed. */
+  protected readonly menu = signal<{ x: number; y: number } | null>(null);
 
   protected readonly columns = computed(() => Array.from({ length: this.sync.dims().cols }, (_, i) => i));
   protected readonly canvasHeight = computed(() => HEADER_H + this.sync.dims().rows * ROW_H);
@@ -219,6 +228,78 @@ export class Grid {
     if (target.row !== active.row || target.col !== active.col) this.select(target.row, target.col, true);
   }
 
+  protected onCellContextMenu(event: MouseEvent, row: number, col: number): void {
+    event.preventDefault();
+    this.commitEdit();
+    // Like Excel: right-clicking inside the selection keeps it, right-clicking outside moves it there.
+    if (!rangeContains(this.range(), row, col)) this.select(row, col);
+    // Keep the menu on screen: it is about 200x190, so pull it back from the right and bottom edges.
+    this.menu.set({
+      x: Math.min(event.clientX, window.innerWidth - 210),
+      y: Math.min(event.clientY, window.innerHeight - 200),
+    });
+    setTimeout(() => this.menuItems()[0]?.focus());
+  }
+
+  protected closeMenu(): void {
+    if (this.menu() === null) return;
+    this.menu.set(null);
+    this.viewport().nativeElement.focus();
+  }
+
+  protected onDocumentMouseDown(event: MouseEvent): void {
+    if (this.menu() && !(event.target as Element).closest('.context-menu')) this.menu.set(null);
+  }
+
+  protected onMenuKeydown(event: KeyboardEvent): void {
+    const items = this.menuItems();
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === 'Escape') this.closeMenu();
+    else if (event.key === 'ArrowDown') items[(at + 1) % items.length]?.focus();
+    else if (event.key === 'ArrowUp') items[(at - 1 + items.length) % items.length]?.focus();
+    else return;
+    event.preventDefault();
+  }
+
+  protected async menuCopy(): Promise<void> {
+    this.closeMenu();
+    await navigator.clipboard.writeText(this.rangeText());
+  }
+
+  protected async menuCut(): Promise<void> {
+    const text = this.rangeText();
+    this.closeMenu();
+    await navigator.clipboard.writeText(text);
+    this.clearSelection();
+  }
+
+  protected async menuPaste(): Promise<void> {
+    this.closeMenu();
+    try {
+      this.pasteText(await navigator.clipboard.readText());
+    } catch {
+      // The browser refused clipboard access. Ctrl+V still works, since it is a real paste event.
+    }
+  }
+
+  protected menuClear(): void {
+    this.closeMenu();
+    this.clearSelection();
+  }
+
+  protected menuSelectAll(): void {
+    this.closeMenu();
+    this.selectAll();
+  }
+
+  private menuItems(): HTMLButtonElement[] {
+    return Array.from(document.querySelectorAll<HTMLButtonElement>('.context-menu button:not(:disabled)'));
+  }
+
+  private rangeText(): string {
+    return rangeToClipboardText(this.range(), (row, col) => this.sync.valueAt(row, col));
+  }
+
   protected onDocumentMouseUp(): void {
     this.dragging = false;
   }
@@ -242,6 +323,10 @@ export class Grid {
       return;
     }
 
+    if (event.key === 'Escape' && this.menu()) {
+      this.closeMenu();
+      return;
+    }
     if (jump && event.key.toLowerCase() === 'a') {
       event.preventDefault();
       this.selectAll();
@@ -324,18 +409,27 @@ export class Grid {
 
   protected onCopy(event: ClipboardEvent): void {
     if (this.editing()) return; // native copy inside the text box
-    event.clipboardData?.setData(
-      'text/plain',
-      rangeToClipboardText(this.range(), (row, col) => this.sync.valueAt(row, col)),
-    );
+    event.clipboardData?.setData('text/plain', this.rangeText());
     event.preventDefault();
+  }
+
+  protected onCut(event: ClipboardEvent): void {
+    if (this.editing()) return;
+    this.onCopy(event);
+    this.clearSelection();
   }
 
   protected onPaste(event: ClipboardEvent): void {
     if (this.editing()) return;
-    const grid = parseClipboardGrid(event.clipboardData?.getData('text/plain') ?? '');
-    if (grid.length === 0) return;
+    const text = event.clipboardData?.getData('text/plain') ?? '';
+    if (parseClipboardGrid(text).length === 0) return;
     event.preventDefault();
+    this.pasteText(text);
+  }
+
+  private pasteText(text: string): void {
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0) return;
 
     // Pastes at the top-left of the selection, like Excel, however the selection was dragged.
     const { top: row, left: col } = this.range();
