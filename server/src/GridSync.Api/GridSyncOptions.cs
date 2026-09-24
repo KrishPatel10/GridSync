@@ -17,6 +17,11 @@ public sealed class GridSyncOptions
     [Range(1, 10_000)] public int MaxOpsPerBatch { get; init; } = 500;
     [Range(1, 3_600)] public int MaxClockSkewSeconds { get; init; } = 60;
 
+    /// <summary>A sheet is snapshotted again once this many new ops have reached the log since its last one.</summary>
+    [Range(1, 1_000_000)] public int SnapshotEveryNOps { get; init; } = 200;
+    /// <summary>How often the snapshot service checks whether any loaded sheet is due, not how often it writes one.</summary>
+    [Range(1, 3_600)] public int SnapshotCheckIntervalSeconds { get; init; } = 10;
+
     public SheetDimensions Dimensions => new(Rows, Cols);
 
     public SyncLimits ToLimits() => new()

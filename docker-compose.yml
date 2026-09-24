@@ -1,0 +1,22 @@
+services:
+  # Local SQL Server for phase 3 persistence. The password below is for this throwaway local
+  # container only: it is never used anywhere but your own machine, so it is fine to keep in this
+  # file. Override it with a real one if you ever run this compose file somewhere that matters.
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${GRIDSYNC_SA_PASSWORD:-GridSync!Dev2026}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - gridsync-sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  gridsync-sqldata:

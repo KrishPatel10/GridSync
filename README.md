@@ -6,13 +6,16 @@ A spreadsheet where several people can edit the same sheet at once, one of them 
 
 **Stack:** ASP.NET Core 10 and SignalR on the server, Angular 22 (standalone, zoneless, signals) in the browser.
 
-Phases 1 and 2 of 4 are done: a live-synced, virtualized grid with presence and offline edit merging, and a formula engine that runs in a Web Worker. Persistence, durable offline edits, and row insertion come next (see [Roadmap](#roadmap)).
+Phases 1 and 2 of 4 are done, and phase 3 is most of the way there: a live-synced, virtualized grid with presence and offline edit merging, a formula engine that runs in a Web Worker, durable offline edits, and server-side persistence with SQL Server. Concurrent row insertion is what's left of phase 3 (see [Roadmap](#roadmap)).
 
 ## Run it
 
-You need the .NET 10 SDK and Node.js 22.22.3+ or 24.15+.
+You need the .NET 10 SDK, Node.js 22.22.3+ or 24.15+, and Docker (for persistence; the app also runs without it, see below).
 
 ```bash
+# once, and again any time you want to start clean: a local SQL Server for persistence
+docker compose up -d
+
 # terminal 1: the sync server on http://localhost:5080
 cd server
 dotnet run --project src/GridSync.Api
@@ -25,6 +28,8 @@ npm start
 
 Open http://localhost:4200 in two browser windows side by side. Use `?sheet=anything` in the address bar to open a different sheet.
 
+The server's Development config (`appsettings.Development.json`, used automatically by `dotnet run`) points at the SQL Server `docker compose up` starts, so persistence is on by default for local development. Without Docker, clear that connection string first (an empty `ConnectionStrings:GridSync`, e.g. `dotnet run --project src/GridSync.Api -- --ConnectionStrings:GridSync=`), and the server falls back to in-memory state, same as phase 1. A connection string that is *set but unreachable* (Docker not started) is a hard startup error on purpose: see [Persistence](#persistence).
+
 ## Try this
 
 1. Type in one window. The other window shows the edit a moment later, flashing in the author's color, with their cursor and name tag on the cell.
@@ -34,6 +39,7 @@ Open http://localhost:4200 in two browser windows side by side. Use `?sheet=anyt
 5. Press Ctrl+End. You're on row 100,000, and the page still only has about 30 rows in it.
 6. Type `10` in A1 and `=A1*2` in B1. B1 shows `20`, and the formula bar shows the formula. Change A1 in the *other* window and watch B1 follow in both. Then type `=B1` in A1 to make a loop: both cells show `#CYCLE!`, and go back to normal when you break it.
 7. Press **Go offline**, type something, then close the tab entirely (not just Go online first). Reopen `http://localhost:4200` with the same `?sheet=` a little later: the edit is there, and it syncs on its own once the page is live.
+8. With `docker compose up -d` running, type in a cell, wait a couple of seconds, then stop the server (Ctrl+C in its terminal) and start it again. Reload the browser: the cell is still there. The server never remembered it in memory across that restart; SQL Server did.
 
 ## How it works
 
@@ -109,13 +115,43 @@ Recovery does not try to reuse the closed tab's identity. Reusing its node id wo
 
 A record is only recovered once it looks abandoned: each tab refreshes a "last seen" timestamp on its own IndexedDB record every few seconds while it holds unsent edits, and another tab only adopts a record once that timestamp is stale (currently 12 seconds). This is a heuristic, not a guarantee: a tab throttled hard enough by the browser (deeply backgrounded, for instance) could in theory look abandoned while still alive. That's not data-corrupting, since the last-writer-wins merge handles a duplicate resend safely either way, just a rare duplicate effort. If IndexedDB isn't available at all (some private-browsing modes, a sandboxed iframe), the app falls back to phase 1's in-memory-only behaviour and says so honestly: the "you'll lose unsaved edits" warning on closing the tab only appears when that fallback is actually in use.
 
+## Persistence
+
+Server state used to live only in memory: a restart lost every sheet. Now every accepted edit is written to an append-only log (SQL Server, via EF Core), and a restart restores each sheet from that log instead of starting it empty.
+
+```mermaid
+flowchart LR
+    H[SheetHub.ApplyOps] -- "queues (write-behind,<br/>never blocks)" --> C[OpLogChannel]
+    C --> W[OpLogPersistenceService] -- "batched writes" --> DB[(SQL Server)]
+    S[SnapshotService] -- "every N ops,<br/>on a timer" --> DB
+    DB -- "on first access<br/>after a restart" --> R[SheetRestorer]
+    R --> M[SheetState<br/>in memory]
+```
+
+**Write-behind, not write-through.** `ApplyOps` queues an accepted edit onto an in-memory channel and returns immediately; a background service drains that channel and writes to the database in batches, so no edit waits on a database round trip. This is a real trade-off, not a free one: if the process crashes in the narrow window between accepting an edit and the next flush, that edit is lost from the log even though the client was told it won. A synchronous write per edit would close that window at the cost of every edit waiting on the database. The queue is unbounded and flushes are frequent, which keeps the window small; it does not make it zero, and the code says so where it matters (`OpLogChannel.cs`).
+
+**Snapshots, so a restart doesn't replay everything.** A background service periodically checks every loaded sheet and, once it has accumulated enough new log entries (200 by default) since its last snapshot, writes a fresh one: the sheet's full state as of that point in the log. Restoring a sheet loads its snapshot, then replays only the log entries after it, through the exact same merge (`SheetState.Apply`) live edits use. That reuse is what makes restore trivially correct: a tail entry that turns out to be older than what the snapshot already holds (a slightly-behind client's clock, logged after the snapshot was taken) is simply ignored, the same as it would be live, and replaying something the snapshot already reflects is a no-op, because the merge is idempotent. Restore never needs its own special-cased logic for "which value wins."
+
+**Restore is lazy, per sheet.** Rather than loading every persisted sheet when the process starts, a sheet is restored the first time something asks for it after a restart (the same `GetOrCreateAsync` that used to just create an empty one). This still satisfies "a restart loses no acknowledged edit": the data was never at risk, only when it's read back, and it avoids paying for sheets nobody reopens.
+
+**Without a database, the server still runs.** No `ConnectionStrings:GridSync` configured means an in-memory store instead, identical in behaviour to phase 1: works, but a restart resets everything. A connection string that *is* set but unreachable is a different case and a hard failure at startup: that's a real misconfiguration (wrong password, container not started), not an opt-out.
+
+**Changing the schema.** `OpLogEntry` and `SheetSnapshot` (`server/src/GridSync.Api/Persistence/`) are the whole model. After changing either, generate a new migration from `server/src/GridSync.Api`: `dotnet ef migrations add <Name> --output-dir Persistence/Migrations`. It runs against a design-time-only context (`GridSyncDbContextFactory.cs`), never a real database.
+
+**Verifying this without a reachable image registry.** The sandbox this was built in cannot pull `mcr.microsoft.com/mssql/server` (Docker itself works; that one registry is unreachable from it), so the SQL-Server-specific path could not be run live from here. Everything this project's own code is responsible for was still proven, twice: `GridSync.Api.Tests` runs the real `Program.cs`, the real `EfPersistenceStore`, and real EF Core migrations against SQLite instead (a provider swap, which is EF Core's concern, not this project's), including a test that disposes the app and creates a fresh one against the same database file and confirms every edit is still there. Separately, the real server was run as a real OS process, with a real SQLite file, edited through a real browser, killed outright, and restarted as a genuinely new process: the edit was there, restored, before any client resent it. What was *not* verified here is the SQL Server dialect itself; run `docker compose up -d` yourself to confirm that last piece.
+
 ## Tests
 
 ```bash
-cd server && dotnet test         # 455 tests: HLC ordering, LWW merge, tombstones, validation, a seeded
-                                 # convergence test, a parallel-writers test for the lock-free merge, and
-                                 # the formula engine: parser, evaluator, calculator, cycles, 100,000 cell
-                                 # chains, a property test (3,600 random edits vs an independent oracle)
+cd server && dotnet test         # 489 tests across two projects:
+                                 # GridSync.Core.Tests (455): HLC ordering, LWW merge, tombstones,
+                                 #   validation, a seeded convergence test, a parallel-writers test for
+                                 #   the lock-free merge, and the formula engine (parser, evaluator,
+                                 #   calculator, cycles, 100,000 cell chains, a property test)
+                                 # GridSync.Api.Tests (34): the persistence layer against an in-memory
+                                 #   fake (restore logic, write-behind batching, snapshot timing), and
+                                 #   against a real WebApplicationFactory<Program> + SQLite + a real
+                                 #   SignalR client, including a full restart-recovers-everything test
 cd client && npm test            # 512 tests: the same on the TypeScript side, plus the sync service
                                  # and the offline outbox (IndexedDB durability)
 cd client && npm run smoke       # 14 end-to-end checks with real SignalR clients against a running server
@@ -155,7 +191,9 @@ server/
   src/GridSync.Core/        HLC, LWW sheet state, op validation (no ASP.NET dependency)
     Formulas/               tokenizer, parser, evaluator, dependency graph and calculator
   src/GridSync.Api/         SignalR hub, sheet store, presence tracking
+    Persistence/            op log, snapshots, EF Core, the write-behind channel and restore logic
   tests/GridSync.Core.Tests/
+  tests/GridSync.Api.Tests/ persistence tests: in-memory fake, and WebApplicationFactory + SQLite
 client/
   src/app/sync/             HLC, LWW map, SignalR sync service, IndexedDB offline outbox
   src/app/grid/             virtualized grid component
@@ -164,6 +202,7 @@ client/
 spec/
   formula-vectors.json      evaluation cases both engines must pass
   recalc-vectors.json       edit sequences both calculators must replay identically
+docker-compose.yml           local SQL Server for persistence
 ```
 
 ## Known limitations
@@ -173,7 +212,8 @@ spec/
 - The C# formula engine is not used by the server yet. It is the reference the TypeScript engine is tested against.
 - Comparison is exact on numbers, so `=0.1+0.2=0.3` is `FALSE`. Excel quietly forgives that; this engine does not.
 
-- Server state lives in memory and resets on restart (phase 3 replaces this with a persisted op log).
+- Persistence is write-behind: an edit the client was told succeeded can still be lost if the server crashes before the next background flush. See [Persistence](#persistence).
+- Write-behind and snapshotting were only run live against SQLite, not SQL Server, from inside the environment this was built in (it cannot reach the image registry SQL Server ships from). The code path is identical either way; only the dialect differs. See [Persistence](#persistence).
 - The app needs to reach the server once to load the sheet; it can go offline after that.
 - Two people editing the same cell at the same moment keep one value, not a merge of both texts. That's the intended rule for spreadsheet cells.
 - The grid has a fixed 100,000 by 26 size. Inserting rows concurrently is a harder problem, planned for phase 3.
@@ -183,5 +223,5 @@ spec/
 
 1. **Phase 1 (done):** live sync, presence, offline merge, virtualized grid.
 2. **Phase 2 (done):** a formula engine: parser, dependency graph between cells, incremental recalculation, cycle detection, evaluated in a Web Worker.
-3. **Phase 3 (in progress):** unsent edits stored in IndexedDB (done, see below), server persistence (an append-only op log with periodic snapshots, EF Core), and concurrent row insertion using fractional indexing. Property-based tests with FsCheck.
+3. **Phase 3 (in progress):** unsent edits stored in IndexedDB (done), server persistence with SQL Server, an append-only op log, periodic snapshots, write-behind batching (done, see [Persistence](#persistence)), and concurrent row insertion using fractional indexing (not started: changes the wire protocol). Property-based tests with FsCheck.
 4. **Phase 4:** load testing with many simulated clients, Playwright end-to-end tests, and published numbers.
