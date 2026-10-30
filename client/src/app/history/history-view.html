@@ -1,0 +1,51 @@
+<section class="bar" aria-label="Version history">
+  <p class="notice">
+    <strong>History</strong>
+    <span>You are looking at a past version. It is read-only, and the live sheet is unchanged.</span>
+  </p>
+
+  <div class="controls">
+    <button type="button" class="step" [disabled]="step() <= 0" (click)="go(step() - 1)">Earlier</button>
+    <input
+      id="history-step"
+      class="slider"
+      type="range"
+      min="0"
+      [max]="count()"
+      [value]="step()"
+      [disabled]="count() === 0"
+      aria-label="Edit number"
+      (input)="onSlide($event)"
+    />
+    <button type="button" class="step" [disabled]="step() >= count()" (click)="go(step() + 1)">Later</button>
+    <output class="position" for="history-step">{{ step() }} of {{ count() }}</output>
+    <button type="button" class="step primary" (click)="closed.emit()">Back to live</button>
+  </div>
+
+  <p class="what" aria-live="polite">
+    @if (failure(); as message) {
+      <span class="failure" role="alert">{{ message }} <button type="button" class="link" (click)="retry()">Try again</button></span>
+    } @else if (!loaded()) {
+      <span class="quiet">Loading history…</span>
+    } @else if (count() === 0) {
+      <span class="quiet">Nothing has been edited in this sheet yet.</span>
+    } @else if (what(); as d) {
+      @if (d.who; as who) {
+        <span class="ink" aria-hidden="true" [style.--ink]="who.color"></span>
+        <strong>{{ who.name }}</strong>
+      }
+      <span>{{ d.what }}</span>
+      @if (d.at; as at) {
+        <span class="quiet">{{ atTime(at) }}</span>
+      }
+    } @else {
+      <span class="quiet">Before the first edit: an empty sheet.</span>
+    }
+  </p>
+</section>
+
+@if (loaded()) {
+  <app-grid class="history-grid" />
+} @else if (!failure()) {
+  <div class="waiting" role="status"><p>Loading history…</p></div>
+}

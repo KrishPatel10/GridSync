@@ -145,13 +145,13 @@
   border-color: var(--blueprint);
 }
 
-.theme {
+.icon-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.theme-icon {
+.icon {
   width: 16px;
   height: 16px;
   fill: none;
@@ -203,7 +203,7 @@
 
 @media (max-width: 640px) {
   .alone,
-  .theme-label {
+  .icon-label {
     display: none;
   }
 

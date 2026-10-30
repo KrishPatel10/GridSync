@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, inject, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import { Grid } from './grid/grid';
 import { formatStat } from './grid/selection-stats';
+import { HistoryView } from './history/history-view';
 import { SheetSyncService } from './sync/sheet-sync.service';
 import { ThemePreference, ThemeService, nextTheme } from './theme/theme.service';
 
@@ -28,7 +29,7 @@ const THEME_LABELS: Record<ThemePreference, string> = {
 
 @Component({
   selector: 'app-root',
-  imports: [Grid],
+  imports: [Grid, HistoryView],
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -58,14 +59,18 @@ export class App {
     return n === 1 ? '1 cell filled' : `${n.toLocaleString()} cells filled`;
   });
 
-  private readonly grid = viewChild.required(Grid);
+  /** Showing a past version of the sheet instead of the live one. */
+  protected readonly historyOpen = signal(false);
+
+  /** The live grid. Not there while the history view has taken its place. */
+  private readonly grid = viewChild(Grid);
 
   /**
    * Excel's status bar for the current selection: Average, Count, Sum when it holds numbers, and
    * just Count when it is only text. Nothing for one cell or an empty block.
    */
   protected readonly statsLabels = computed(() => {
-    const stats = this.grid().stats();
+    const stats = this.grid()?.stats();
     if (!stats) return null;
     const count = { name: 'Count', value: stats.count.toLocaleString() };
     if (stats.numbers === 0) return [count];

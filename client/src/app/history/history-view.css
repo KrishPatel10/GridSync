@@ -1,0 +1,140 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The bar sits above the grid and says, in the blueprint ink, that this is not the live sheet. */
+.bar {
+  display: grid;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+  border-top: 3px solid var(--blueprint);
+}
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.notice span {
+  color: var(--ink-muted);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider {
+  flex: 1;
+  min-width: 96px;
+  accent-color: var(--blueprint);
+}
+
+.step {
+  padding: 5px 12px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.step:hover:not(:disabled) {
+  background: var(--header);
+}
+
+.step:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.step.primary {
+  color: var(--on-accent);
+  background: var(--blueprint);
+  border-color: var(--blueprint);
+}
+
+.step.primary:hover {
+  background: var(--blueprint);
+  filter: brightness(1.08);
+}
+
+.position {
+  min-width: 8ch;
+  text-align: right;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 1.4em;
+  margin: 0;
+}
+
+.ink {
+  width: 10px;
+  height: 10px;
+  background: var(--ink);
+  border-radius: 50%;
+}
+
+.quiet {
+  color: var(--ink-muted);
+}
+
+.failure {
+  color: var(--danger);
+}
+
+.link {
+  padding: 0;
+  color: var(--blueprint);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.history-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.waiting {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  color: var(--ink-muted);
+}
+
+.waiting p {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .controls {
+    flex-wrap: wrap;
+  }
+
+  .slider {
+    order: -1;
+    flex-basis: 100%;
+  }
+
+  .position {
+    margin-left: auto;
+  }
+}

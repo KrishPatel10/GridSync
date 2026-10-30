@@ -17,12 +17,21 @@ function pick<T>(items: readonly T[], random: number): T {
   return items[random % items.length];
 }
 
+/**
+ * The name and ink a node id stands for. They come from its first two bytes, so they are a pure
+ * function of the id: anyone who only has the id (an edit in the history view, long after its author
+ * left) shows the same name and color the author had. An id that is not hex digits (not made here)
+ * falls back to the first name and ink.
+ */
+export function identityFromNodeId(nodeId: string): Identity {
+  const byte = (at: number): number => {
+    const value = parseInt(nodeId.substring(at * 2, at * 2 + 2), 16);
+    return Number.isNaN(value) ? 0 : value;
+  };
+  return { nodeId, name: pick(NAMES, byte(0)), color: pick(PEER_INKS, byte(1)) };
+}
+
 export function createIdentity(): Identity {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
-  const nodeId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return {
-    nodeId,
-    name: pick(NAMES, bytes[0]),
-    color: pick(PEER_INKS, bytes[1]),
-  };
+  return identityFromNodeId(Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(''));
 }
