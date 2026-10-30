@@ -10,8 +10,9 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { MAX_ROWS_PER_INSERT, SheetSyncService } from '../sync/sheet-sync.service';
+import { MAX_ROWS_PER_INSERT } from '../sync/sheet-sync.service';
 import { cellAddress, columnName, parseClipboardGrid } from './cell-address';
+import { GRID_DATA } from './grid-data';
 import {
   cellAtPoint,
   isSingleCell,
@@ -63,7 +64,8 @@ const NUMERIC = /^[-+]?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?%?$/;
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Grid {
-  protected readonly sync = inject(SheetSyncService);
+  /** What the grid shows: the live sheet, or a past version in the history view. */
+  protected readonly sync = inject(GRID_DATA);
 
   protected readonly ROW_H = ROW_H;
   protected readonly HEADER_H = HEADER_H;
@@ -316,6 +318,7 @@ export class Grid {
 
   /** Inserts blank rows above or below the selection, then selects them across the same columns. */
   private insertRows(where: 'above' | 'below'): void {
+    if (this.sync.readOnly) return;
     const r = this.range();
     const count = Math.min(rangeHeight(r), MAX_ROWS_PER_INSERT);
     const first = this.sync.insertRows(where === 'above' ? r.top : r.bottom + 1, count);
@@ -472,6 +475,7 @@ export class Grid {
   }
 
   private pasteText(text: string): void {
+    if (this.sync.readOnly) return;
     const grid = parseClipboardGrid(text);
     if (grid.length === 0) return;
 
@@ -521,6 +525,7 @@ export class Grid {
 
   /** Clears every cell in the selection. Cells that are already empty create no edits. */
   private clearSelection(): void {
+    if (this.sync.readOnly) return;
     const r = this.range();
     for (let row = r.top; row <= r.bottom; row++) {
       for (let col = r.left; col <= r.right; col++) this.sync.setCell(row, col, null);
@@ -529,6 +534,7 @@ export class Grid {
 
   private beginEdit(row: number, col: number, initial?: string): void {
     this.select(row, col);
+    if (this.sync.readOnly) return;
     this.draft.set(initial ?? this.sync.valueAt(row, col));
     this.editingRef.set(this.refAt({ row, col }));
   }

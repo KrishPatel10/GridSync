@@ -9,6 +9,7 @@ import {
 import { FORMULA_BACKEND_FACTORY, FormulaBackend, InlineFormulaBackend } from '../formulas/formula-backend';
 import { toDisplayFormula, toStoredFormula } from '../formulas/formula-rows';
 import { FormulaUpdate, RawChange } from '../formulas/sheet-calculator';
+import { displaysInBlock, type Block, type GridData } from '../grid/grid-data';
 import { newRowId, RowLayout, RowOrder } from '../rows/row-order';
 import { HybridLogicalClock } from './hlc';
 import { createIdentity } from './identity';
@@ -58,7 +59,8 @@ const OUTBOX_HEARTBEAT_MS = 4_000;
  * whether an edit reaches the server immediately, after a reconnect, or twice.
  */
 @Injectable({ providedIn: 'root' })
-export class SheetSyncService {
+export class SheetSyncService implements GridData {
+  readonly readOnly = false;
   readonly identity = createIdentity();
 
   private readonly hlc = new HybridLogicalClock(this.identity.nodeId);
@@ -413,28 +415,10 @@ export class SheetSyncService {
     return raw.charAt(0) === '=' ? (this.formulaDisplays.get(cellKey(handle, col)) ?? '') : raw;
   }
 
-  /**
-   * The displayed text of the non-empty cells in a block. Walks whichever is smaller, the block or
-   * the set of stored cells, so selecting the whole sheet doesn't visit 2.6 million empty cells.
-   */
-  displaysIn(block: { top: number; left: number; bottom: number; right: number }): string[] {
+  /** The displayed text of the non-empty cells in a block. */
+  displaysIn(block: Block): string[] {
     this._version();
-    const out: string[] = [];
-    const area = (block.bottom - block.top + 1) * (block.right - block.left + 1);
-
-    if (area <= this.cells.filledCount) {
-      for (let row = block.top; row <= block.bottom; row++) {
-        for (let col = block.left; col <= block.right; col++) out.push(this.displayAt(row, col));
-      }
-    } else {
-      this.cells.forEachFilled((handle, col) => {
-        const row = this.order.indexOfHandle(handle);
-        if (row >= block.top && row <= block.bottom && col >= block.left && col <= block.right) {
-          out.push(this.displayAt(row, col));
-        }
-      });
-    }
-    return out;
+    return displaysInBlock(block, this.cells, this.order, (row, col) => this.displayAt(row, col));
   }
 
   peersAt(row: number, col: number): readonly UserPresence[] {
