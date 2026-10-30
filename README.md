@@ -6,7 +6,7 @@ A spreadsheet where several people can edit the same sheet at once, one of them 
 
 **Stack:** ASP.NET Core 10 and SignalR on the server, Angular 22 (standalone, zoneless, signals) in the browser.
 
-Phases 1 to 3 of 4 are done: a live-synced, virtualized grid with presence and offline edit merging, block selection with a status-bar summary and a right-click menu, a formula engine that runs in a Web Worker, durable offline edits, server-side persistence with SQL Server, and concurrent row insertion (see [Roadmap](#roadmap)).
+Phases 1 to 3 of 4 are done: a live-synced, virtualized grid with presence and offline edit merging, block selection with a status-bar summary and a right-click menu, a formula engine that runs in a Web Worker, durable offline edits, server-side persistence with SQL Server, concurrent row insertion, and a read-only version history over the op log (see [Roadmap](#roadmap)).
 
 ## Run it
 
@@ -156,23 +156,51 @@ That is harder than it sounds, because "row 5" stops meaning anything the moment
 
 The protocol changed for this, so `JoinSheet` now carries a protocol version and an out of date page is told to reload. The migration converts an existing op log in place (old row numbers become `b<number>`) and drops snapshots, which are rebuilt from the log.
 
+## Version history
+
+Click **History** in the top bar to step back through every edit a sheet has had. The slider runs from the empty sheet to the latest edit, and each position shows the sheet as it stood after that many edits, with a line saying what the edit was ("Otter set B2 to 1,250"). It is read-only, and the live sheet keeps syncing behind it. **Back to live** returns to it.
+
+This costs little because [Persistence](#persistence) already built the hard part: the op log is a complete, append-only history. Two read-only endpoints sit on top of it:
+
+- `GET /api/sheets/{id}/history` returns how many edits the sheet has had.
+- `GET /api/sheets/{id}/history/{step}` returns the sheet after its first `step` edits, in the same shape a page gets when it joins.
+
+**A step is the Nth edit of this sheet, not an op Id.** Ids are one sequence shared by every sheet, so they have gaps within any one sheet. Only edits that won are logged (a stale edit never is), so each step really changes the sheet, and replaying them in log order through the same `SheetState.Apply` the hub uses gives what the people editing saw.
+
+**The grid is the same grid.** It reads through a small interface (`GridData`) instead of the sync service, so the history view hands it a read-only source and it refuses to edit, paste, clear or insert rows. Formulas are recalculated for each version from the raw text with the same calculator, so they show their values and follow inserted rows, as they do live.
+
+**Who made an edit** is shown from the node id on it. A tab's name and color are computed from its node id (`identityFromNodeId`), so history can name an author long after they left, with nothing extra stored. What the log does not have, history cannot show:
+
+- A row insert is logged without an author or a timestamp, so it reads "Row 4 was inserted" with no name.
+- The time is the editor's own clock. The server only checks that it is within 60 seconds of its own, so treat it as approximate.
+- Presence (who was where) is not recorded, so none is shown.
+
+Limits I know about:
+
+- Each step replays the log from the start, so a request costs time proportional to the step number. I have not measured it on a large log. The fix is to start from the stored snapshot when it is not newer than the step, and replay only what comes after it.
+- The log is written behind the hub, so the newest edit or two can take a moment to appear. The slider's length is fixed when it opens; close and reopen to include newer edits.
+- It works without a database too, because the in-memory store keeps its log while the process runs, but a restart then forgets it, as it forgets everything.
+- There is no "restore this version" yet. History only looks.
+
 ## Tests
 
 ```bash
-cd server && dotnet test         # 550 tests across two projects:
+cd server && dotnet test         # 559 tests across two projects:
                                  # GridSync.Core.Tests (505): HLC ordering, LWW merge, tombstones,
                                  #   validation, a seeded convergence test, a parallel-writers test for
                                  #   the lock-free merge, row inserts (FsCheck: random histories in any
                                  #   order converge), fractional keys, and the formula engine (parser,
                                  #   evaluator, calculator, cycles, 100,000 cell chains, a property test)
-                                 # GridSync.Api.Tests (45): the persistence layer against an in-memory
+                                 # GridSync.Api.Tests (54): the persistence layer against an in-memory
                                  #   fake (restore logic, write-behind batching, snapshot timing), and
                                  #   against a real WebApplicationFactory<Program> + SQLite + a real
                                  #   SignalR client, including a full restart-recovers-everything test,
-                                 #   plus the hub's row insert handling end to end
-cd client && npm test            # 624 tests: the same on the TypeScript side, plus the row order (checked
+                                 #   plus the hub's row insert handling and the version history
+                                 #   endpoints, end to end
+cd client && npm test            # 641 tests: the same on the TypeScript side, plus the row order (checked
                                  # against a brute-force oracle), formulas following rows, the sync
-                                 # service and the offline outbox (IndexedDB durability)
+                                 # service and the offline outbox (IndexedDB durability), and the
+                                 # version history data source and step labels
 cd client && npm run smoke       # 20 end-to-end checks with real SignalR clients against a running server
 ```
 
@@ -210,12 +238,14 @@ server/
   src/GridSync.Core/        HLC, LWW sheet state, op validation (no ASP.NET dependency)
     Formulas/               tokenizer, parser, evaluator, dependency graph and calculator
   src/GridSync.Api/         SignalR hub, sheet store, presence tracking
-    Persistence/            op log, snapshots, EF Core, the write-behind channel and restore logic
+    Persistence/            op log, snapshots, EF Core, the write-behind channel and restore logic,
+                            and the read-only version history endpoints
   tests/GridSync.Core.Tests/
   tests/GridSync.Api.Tests/ persistence tests: in-memory fake, and WebApplicationFactory + SQLite
 client/
   src/app/sync/             HLC, LWW map, SignalR sync service, IndexedDB offline outbox
-  src/app/grid/             virtualized grid component
+  src/app/grid/             virtualized grid component, and the GridData interface it reads through
+  src/app/history/          version history: the slider view, its read-only grid data source, step labels
   src/app/formulas/         the same formula engine in TypeScript, plus the Web Worker
   scripts/smoke.mjs         end-to-end check against a live server
 spec/

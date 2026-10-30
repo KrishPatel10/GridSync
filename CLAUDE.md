@@ -40,7 +40,7 @@ Last verified 2026-10-30 against git history and a local test run. Re-verify bef
 
 **Phase 3: persistence, durability, row insertion (done).** Append-only op log, snapshots, write-behind batching on SQL Server; unsent edits in IndexedDB; rows have stable ids ordered by fractional-index keys; protocol is versioned; FsCheck property tests.
 
-**Also landed:** multi-cell selection with a footer summary, right-click menu, System/Light/Dark theme switch (`client/src/app/theme`, tokens use `light-dark()` in `styles.css`), GitHub Actions CI (`.github/workflows/ci.yml`), `docker-compose.yml`.
+**Also landed:** multi-cell selection with a footer summary, right-click menu, System/Light/Dark theme switch (`client/src/app/theme`, tokens use `light-dark()` in `styles.css`), read-only version history (History button; `HistoryEndpoints.cs`, `client/src/app/history`, see README "Version history"), GitHub Actions CI (`.github/workflows/ci.yml`), `docker-compose.yml`.
 
 **Phase 4: prove it (next).**
 
@@ -75,7 +75,7 @@ Server, from `server/`: `dotnet build`, `dotnet test`, `dotnet run --project src
 
 Client, from `client/` (Node version in `client/.nvmrc`): `npm install`, `npm start` (http://localhost:4200, proxies /hubs and /api to :5080), `npm test` (Vitest), `npx ng build`, `npm run bench:formulas`, `npm run smoke` (end-to-end checks against a running server; add `GRIDSYNC_URL=http://localhost:4200 GRIDSYNC_WS_ONLY=1` to go through the dev proxy over WebSockets only).
 
-Last local run (2026-10-30): `dotnet test` 505 + 45 passed, `npm test` 624 passed (21 files).
+Last local run (2026-10-30, after version history): `dotnet test` 505 + 54 passed, `npm test` 641 passed (23 files), `npx ng build` clean.
 
 ## Architecture
 
@@ -84,6 +84,7 @@ Last local run (2026-10-30): `dotnet test` 505 + 45 passed, `npm test` 624 passe
 - `client/src/app/sync`: `hlc.ts` and `lww-map.ts` mirror the C# logic; `sheet-sync.service.ts` owns the connection, the pending queue and presence.
 - `client/src/app/grid`: the virtual scroller, keyboard handling, inline editor, paste, selection.
 - `client/src/app/theme`: `ThemeService`. An inline script in `index.html` applies a saved theme before first paint.
+- `client/src/app/history`: version history view. The grid reads through the `GridData` interface (`grid/grid-data.ts`): `SheetSyncService` is the live source, `HistoryGridData` a read-only one. A source with `readOnly` true makes the grid refuse every write.
 - `spec/`: JSON vectors that both the xUnit and Vitest suites load.
 
 ## Invariants: never break these
@@ -99,6 +100,8 @@ Last local run (2026-10-30): `dotnet test` 505 + 45 passed, `npm test` 624 passe
 - The C# and TypeScript engines (formulas, fractional index) must pass the same vectors in `spec/`. Change the vectors, then both sides.
 - Any change to the op format bumps the protocol version and updates both sides, the validator and the tests together.
 - Colors in `styles.css` are `light-dark(light, dark)` tokens. Add new colors there, not in a media query.
+- History reads only: nothing under `/api/sheets/{id}/history` may write. A history step is the Nth logged edit of that sheet, never an op Id (Ids are shared across sheets). Any new `GridData` method that writes must be a no-op in `HistoryGridData` and guarded by `readOnly` in the grid.
+- A node id's name and ink come from `identityFromNodeId`; `createIdentity` uses it too. Change both through that one function.
 
 ## How to work with Krish
 
@@ -131,3 +134,4 @@ Newest at the bottom. Each entry: date, what changed, actual test results, open 
 - 2026-09-20 (claude.ai): Phase 1 built. 16 xUnit (stand-in runner), 13 Vitest, 14 smoke checks. One flaky keyboard check noted above.
 - 2026-09-20 to 2026-10-30: Phases 2 and 3 landed (see Progress). Theme switch added to the client, 5 tests.
 - 2026-10-30 (Claude Code): created this file from the original brief, updated to match the repo. Ran `dotnet test` (505 + 45 passed, NU1902/NU1903 warnings) and `npm test` (624 passed). Not run: smoke, Playwright, build in CI.
+- 2026-10-30 (Claude Code): version history. Server: `GET /api/sheets/{id}/history[/{step}]` replays the op log (no schema or protocol change). Client: grid now reads through `GridData`; History button opens a read-only slider view. Tests: 505 + 54 xUnit, 641 Vitest, `ng build` clean. Checked in a real browser against a running in-memory server: stepping, row insert, formula following its row, read-only (no editor, write menu items disabled, server edit count unchanged), Back to live. NOT verified: how it looks (screenshots timed out, window hidden), the SQL Server path (only SQLite), a large log, `npm run smoke`, Playwright. Open: no "restore this version"; replay is O(step) per request, unmeasured; vulnerable-package warnings still open.
