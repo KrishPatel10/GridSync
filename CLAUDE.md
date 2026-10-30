@@ -58,7 +58,7 @@ Last verified 2026-10-30 against git history and a local test run. Re-verify bef
 **Loose ends to check:**
 
 - [ ] The flaky keyboard check "Enter moves down, Tab moves right" (failed once in 6 headless runs in phase 1, never reproduced). Reproduce with a stress test before changing `client/src/app/grid/grid.ts` (`onGridKeydown`, the `afterRenderEffect` that focuses the editor). Confirm whether it still happens.
-- [ ] `dotnet test` reports NU1902/NU1903 warnings: `System.Security.Cryptography.Pkcs` 9.0.11 has known vulnerabilities. Look at which package pulls it in and bump it.
+- [ ] `dotnet list package --vulnerable --include-transitive` (2026-10-30) flags two transitive packages, no direct ones: `System.Security.Cryptography.Pkcs` 9.0.11 (high + moderate; in GridSync.Api and its tests, likely via the EF SqlServer dependency chain) and `Microsoft.AspNetCore.SignalR.Common` 10.0.12 (high; test project only, via the SignalR client). Fix is a patched version, either from a newer EF/SignalR release or a direct pin. A pin adds a PackageReference, so ask Krish first.
 - [ ] Confirm the CI badge is green on GitHub (it can't be checked locally).
 
 ## Open questions for Krish (ask, don't assume)
