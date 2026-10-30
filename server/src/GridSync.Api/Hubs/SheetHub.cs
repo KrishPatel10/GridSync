@@ -16,9 +16,6 @@ public sealed partial class SheetHub(
     private const string DefaultColor = "#2456D6";
     private const int MaxNameLength = 32;
 
-    [GeneratedRegex("^[A-Za-z0-9_-]{1,64}$")]
-    private static partial Regex IdPattern();
-
     [GeneratedRegex("^#[0-9A-Fa-f]{6}$")]
     private static partial Regex ColorPattern();
 
@@ -35,10 +32,10 @@ public sealed partial class SheetHub(
         if (protocolVersion != Protocol.Version)
             throw new HubException("This page is out of date. Reload it to keep editing.");
 
-        if (string.IsNullOrEmpty(sheetId) || !IdPattern().IsMatch(sheetId))
+        if (!IdSyntax.IsValid(sheetId))
             throw new HubException("Sheet names can use 1 to 64 letters, digits, hyphens, or underscores.");
 
-        if (string.IsNullOrEmpty(nodeId) || !IdPattern().IsMatch(nodeId))
+        if (!IdSyntax.IsValid(nodeId))
             throw new HubException("Node ids can use 1 to 64 letters, digits, hyphens, or underscores.");
 
         SheetState sheet;

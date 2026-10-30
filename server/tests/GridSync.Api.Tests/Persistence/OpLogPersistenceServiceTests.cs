@@ -113,6 +113,8 @@ public class OpLogPersistenceServiceTests
         public Task<SheetSnapshot?> GetSnapshotAsync(string sheetId, CancellationToken ct = default) => _inner.GetSnapshotAsync(sheetId, ct);
         public Task<IReadOnlyList<OpLogEntry>> GetTailAsync(string sheetId, long afterOpId, CancellationToken ct = default) => _inner.GetTailAsync(sheetId, afterOpId, ct);
         public Task<long> GetLatestOpIdAsync(string sheetId, CancellationToken ct = default) => _inner.GetLatestOpIdAsync(sheetId, ct);
+        public Task<int> CountLogAsync(string sheetId, CancellationToken ct = default) => _inner.CountLogAsync(sheetId, ct);
+        public Task<IReadOnlyList<OpLogEntry>> GetLogPrefixAsync(string sheetId, int count, CancellationToken ct = default) => _inner.GetLogPrefixAsync(sheetId, count, ct);
         public Task SaveSnapshotAsync(SheetSnapshot snapshot, CancellationToken ct = default) => _inner.SaveSnapshotAsync(snapshot, ct);
     }
 }

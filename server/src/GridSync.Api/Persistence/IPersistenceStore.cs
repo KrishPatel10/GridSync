@@ -20,6 +20,15 @@ public interface IPersistenceStore
     /// <summary>The highest Id logged for a sheet, or 0 if it has never been written to.</summary>
     Task<long> GetLatestOpIdAsync(string sheetId, CancellationToken ct = default);
 
+    /// <summary>How many entries this sheet's log holds. The upper bound for a history step.</summary>
+    Task<int> CountLogAsync(string sheetId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The first <paramref name="count"/> log entries for a sheet, oldest first: the sheet's history up
+    /// to that point. Counted per sheet, not by Id, because Ids are one sequence shared by every sheet.
+    /// </summary>
+    Task<IReadOnlyList<OpLogEntry>> GetLogPrefixAsync(string sheetId, int count, CancellationToken ct = default);
+
     /// <summary>Replaces this sheet's snapshot (there is only ever one, not a history).</summary>
     Task SaveSnapshotAsync(SheetSnapshot snapshot, CancellationToken ct = default);
 }

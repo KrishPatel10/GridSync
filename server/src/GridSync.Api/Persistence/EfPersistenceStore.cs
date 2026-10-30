@@ -41,6 +41,22 @@ public sealed class EfPersistenceStore(IDbContextFactory<GridSyncDbContext> fact
             .MaxAsync(ct) ?? 0;
     }
 
+    public async Task<int> CountLogAsync(string sheetId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.OpLog.AsNoTracking().CountAsync(e => e.SheetId == sheetId, ct);
+    }
+
+    public async Task<IReadOnlyList<OpLogEntry>> GetLogPrefixAsync(string sheetId, int count, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.OpLog.AsNoTracking()
+            .Where(e => e.SheetId == sheetId)
+            .OrderBy(e => e.Id)
+            .Take(count)
+            .ToListAsync(ct);
+    }
+
     public async Task SaveSnapshotAsync(SheetSnapshot snapshot, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

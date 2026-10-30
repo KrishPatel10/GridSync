@@ -157,6 +157,8 @@ public class SnapshotServiceTests
         public Task<SheetSnapshot?> GetSnapshotAsync(string sheetId, CancellationToken ct = default) => inner.GetSnapshotAsync(sheetId, ct);
         public Task SaveSnapshotAsync(SheetSnapshot snapshot, CancellationToken ct = default) => inner.SaveSnapshotAsync(snapshot, ct);
         public Task<long> GetLatestOpIdAsync(string sheetId, CancellationToken ct = default) => inner.GetLatestOpIdAsync(sheetId, ct);
+        public Task<int> CountLogAsync(string sheetId, CancellationToken ct = default) => inner.CountLogAsync(sheetId, ct);
+        public Task<IReadOnlyList<OpLogEntry>> GetLogPrefixAsync(string sheetId, int count, CancellationToken ct = default) => inner.GetLogPrefixAsync(sheetId, count, ct);
 
         public Task<IReadOnlyList<OpLogEntry>> GetTailAsync(string sheetId, long afterOpId, CancellationToken ct = default) =>
             _failing && sheetId == failingSheetId

@@ -53,6 +53,23 @@ public sealed class InMemoryPersistenceStore : IPersistenceStore
         }
     }
 
+    public Task<int> CountLogAsync(string sheetId, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(_log.Count(e => e.SheetId == sheetId));
+        }
+    }
+
+    public Task<IReadOnlyList<OpLogEntry>> GetLogPrefixAsync(string sheetId, int count, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<OpLogEntry> prefix = _log.Where(e => e.SheetId == sheetId).OrderBy(e => e.Id).Take(count).ToList();
+            return Task.FromResult(prefix);
+        }
+    }
+
     public Task SaveSnapshotAsync(SheetSnapshot snapshot, CancellationToken ct = default)
     {
         lock (_gate)

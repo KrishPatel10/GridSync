@@ -87,6 +87,38 @@ public class InMemoryPersistenceStoreTests
     }
 
     [Fact]
+    public async Task CountLog_counts_only_the_requested_sheet()
+    {
+        var store = new InMemoryPersistenceStore();
+        await store.AppendAsync([Entry("sheet-1", 0, 0), Entry("sheet-2", 0, 0), Entry("sheet-1", 0, 1)]);
+
+        Assert.Equal(2, await store.CountLogAsync("sheet-1"));
+        Assert.Equal(1, await store.CountLogAsync("sheet-2"));
+        Assert.Equal(0, await store.CountLogAsync("never-written"));
+    }
+
+    [Fact]
+    public async Task GetLogPrefix_takes_the_first_n_of_this_sheet_even_when_other_sheets_are_interleaved()
+    {
+        // Ids are shared across sheets, so sheet-1's entries are Ids 1, 3, 4: "the first two" must be 1 and 3.
+        var store = new InMemoryPersistenceStore();
+        await store.AppendAsync([Entry("sheet-1", 0, 0), Entry("sheet-2", 0, 0), Entry("sheet-1", 0, 1), Entry("sheet-1", 0, 2)]);
+
+        var prefix = await store.GetLogPrefixAsync("sheet-1", 2);
+
+        Assert.Equal([1, 3], prefix.Select(e => e.Id));
+    }
+
+    [Fact]
+    public async Task GetLogPrefix_of_zero_is_empty()
+    {
+        var store = new InMemoryPersistenceStore();
+        await store.AppendAsync([Entry("demo", 0, 0)]);
+
+        Assert.Empty(await store.GetLogPrefixAsync("demo", 0));
+    }
+
+    [Fact]
     public async Task GetSnapshot_is_null_when_none_was_ever_saved()
     {
         var store = new InMemoryPersistenceStore();

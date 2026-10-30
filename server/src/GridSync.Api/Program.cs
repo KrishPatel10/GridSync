@@ -104,6 +104,8 @@ app.MapGet("/api/sheets/{id}", (string id, SheetStore store) =>
         ? Results.Ok(new { sheet.Id, sheet.Dimensions.Rows, sheet.Dimensions.Cols, Filled = sheet.FilledCount })
         : Results.NotFound());
 
+app.MapHistory();
+
 app.MapHub<SheetHub>("/hubs/sheet");
 
 app.Run();
